@@ -16,8 +16,8 @@ def create_database(con):
     try:
         cur = con.cursor()
         cur.execute("""
-    CREATE TABLE Player(
-                    ID TEXT            PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS Player(
+                    playerID TEXT            PRIMARY KEY,
                     name TEXT,
                     level TEXT,
                     XP INTEGER,
@@ -28,10 +28,10 @@ def create_database(con):
                     );
                     """)
         cur.execute("""
-    CREATE TABLE Task(
-                    ID TEXT,
+    CREATE TABLE IF NOT EXISTS Task(
+                    TaskID TEXT,
                     name TEXT,
-                    difficulty TEXT,
+                    difficulty INTEGER,
                     description TEXT,
                     currentProgress REAL,
                     fullProgress REAL,
@@ -49,7 +49,6 @@ def create_database(con):
     print("Successfully created database")
     con.commit()
     return 0
-
 
 
 
