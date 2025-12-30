@@ -4,13 +4,12 @@ from typing import Any
 
 class Database_Connection():
     def __init__(self, filename="database.db"):
-        self.con = self.get_connection(filename) 
         self.filename = filename
 
-    def get_connection(self, filename) -> sqlite3.Connection:
+    def _get_connection(self) -> sqlite3.Connection:
         print("Connecting to database...")
         try:
-            con = sqlite3.connect(filename)
+            con = sqlite3.connect(self.filename)
         except Exception as e:
             print("Error while connecting to database!")
             raise e
@@ -21,30 +20,30 @@ class Database_Connection():
     def reset_database(self) -> None:
         print("Dropping database...")
         try:
-            cur = self.con.cursor()
+            con = self._get_connection()
+            cur = con.cursor()
             cur.execute("""
         DROP TABLE IF EXISTS Player;
                         """)
             cur.execute("""
         DROP TABLE IF EXISTS Task;
                         """)
-            self.con.commit()
+            con.commit()
             print("Successfully drop database!")
-        except sqlite3.ProgrammingError:
-            self.con = self.get_connection(self.filename)
-            self.reset_database() 
         except Exception as e:
             raise e
+        con.close()
 
     def create_database(self) -> None:
         print("Creating database...")
         try:
-            cur = self.con.cursor()
+            con = self._get_connection()
+            cur = con.cursor()
             cur.execute("""
         CREATE TABLE IF NOT EXISTS Player(
                         playerID TEXT            PRIMARY KEY,
                         name TEXT,
-                        level TEXT,
+                        level INTEGER,
                         XP INTEGER,
                         XPfull INTEGER,
                         lastFinishTask TEXT,
@@ -67,41 +66,35 @@ class Database_Connection():
                         playerID TEXT,     
                         FOREIGN KEY(playerID) REFERENCES Player(playerID)
                         );""")
-            self.con.commit()
+            con.commit()
             print("Successfully created database!")
-        except sqlite3.ProgrammingError:
-            self.con = self.get_connection(self.filename)
-            self.create_database() 
         except Exception as e:
             print("Failed to create database!")
             raise e
-        finally:
-            self.con.close()
+        con.close()
 
     def fetch_unfinished_tasks(self) -> list[tuple[Any]]:
         res = []
         print("Fetch unfinished tasks!")
         try:
-            cur = self.con.cursor()
+            con = self._get_connection()
+            cur = con.cursor()
             cur.execute("""
             SELECT * FROM Task 
                 where finish = 0;
                         """)
             res = cur.fetchall()
             print("Successfully fetch database!")
-        except sqlite3.ProgrammingError:
-            self.con = self.get_connection(self.filename)
-            self.fetch_unfinished_tasks() 
         except Exception as e:
             print("Failed to fetch database!")
             raise e
-        finally:
-            self.con.close()
+        con.close()
         return res
 
     def seed_initial_data(self):
         try:
-            cur = self.con.cursor()
+            con = self._get_connection()
+            cur = con.cursor()
             # 1. Create the Player (The "Main Character")
             # We use INSERT OR IGNORE so we don't create duplicates every time we run
             cur.execute("""
@@ -120,19 +113,18 @@ class Database_Connection():
                                             fullProgress, rewardXP, deadline, finish, recurrent, playerID)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, sample_tasks)
-            self.con.commit()
+            con.commit()
             print("Seed data planted!")
-        except sqlite3.ProgrammingError:
-            self.con = self.get_connection(self.filename)
-            self.seed_initial_data() 
         except Exception as e:
             print("Failed to seed data!")
             raise e
-    
+        con.close() 
+
     def fetch_player(self):
         print("Fetching player information...")
         try:
-            cur = self.con.cursor()
+            con = self._get_connection()
+            cur = con.cursor()
             cur.execute("""
             SELECT * FROM Player 
             ORDER BY savedTimestamp DESC 
@@ -140,13 +132,69 @@ class Database_Connection():
             """)
             res = cur.fetchone()
             print("Successfully fetched player information!")
-        except sqlite3.ProgrammingError:
-            self.con = self.get_connection(self.filename)
-            self.fetch_player() 
         except Exception as e:
             print("Failed to seed data!")
             raise e
-        finally:
-            self.con.close()
+        con.close()
         return res
 
+    def update_player_xp(self, xp, player_id):
+        try:
+            print("Update player xp...")
+            con = self._get_connection()
+            cur = con.cursor()
+            cur.execute("""
+                           UPDATE Player
+                           SET XP = ?
+                           WHERE PlayerID = ?;
+                           """, (xp, player_id))
+            con.commit()
+            con.close()
+            print("Successfully update player xp")
+        except Exception as e:
+            raise e
+
+    def update_player_level(self, level, player_id):
+        try:
+            print("Update player level...")
+            con = self._get_connection()
+            cur = con.cursor()
+            cur.execute("""
+                           UPDATE Player
+                           SET Level = ?
+                           WHERE PlayerID = ?;
+                           """, (level, player_id))
+            con.commit()
+            con.close()
+            print("Successfully update player level")
+        except Exception as e:
+            raise e
+    def update_complete_task(self, task_id):
+        print("Ticking off task...")    
+        try:
+            con = self._get_connection()
+            cur = con.cursor()
+            cur.execute("""
+                        UPDATE Task
+                        SET finish = 1 
+                        WHERE TaskID = ?;
+                        """, (task_id,))
+            con.commit()
+            con.close()
+            print("Successfully ticked off task!")
+        except Exception as e:
+            raise e
+
+
+con = Database_Connection()
+con.reset_database()
+con.create_database()
+con.seed_initial_data()
+#
+print(con.fetch_unfinished_tasks())
+print(con.fetch_player())
+# con.update_complete_task('task_01')
+# con.update_complete_task('task_02')
+# con.update_player_xp(90, 'hero_01')
+# print(con.fetch_unfinished_tasks())
+# print(con.fetch_player())
