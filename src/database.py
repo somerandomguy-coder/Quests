@@ -1,4 +1,6 @@
 import sqlite3
+from datetime import datetime
+import uuid
 from sys import exception
 from typing import Any
 
@@ -138,37 +140,22 @@ class Database_Connection():
         con.close()
         return res
 
-    def update_player_xp(self, xp, player_id):
+    def update_player_stat(self, xp, level, player_id):
         try:
-            print("Update player xp...")
+            print("Update player stat...")
             con = self._get_connection()
             cur = con.cursor()
             cur.execute("""
                            UPDATE Player
-                           SET XP = ?
+                           SET XP = ?, Level = ?
                            WHERE PlayerID = ?;
-                           """, (xp, player_id))
+                           """, (xp, level, player_id))
             con.commit()
             con.close()
-            print("Successfully update player xp")
+            print("Successfully update player stat")
         except Exception as e:
             raise e
 
-    def update_player_level(self, level, player_id):
-        try:
-            print("Update player level...")
-            con = self._get_connection()
-            cur = con.cursor()
-            cur.execute("""
-                           UPDATE Player
-                           SET Level = ?
-                           WHERE PlayerID = ?;
-                           """, (level, player_id))
-            con.commit()
-            con.close()
-            print("Successfully update player level")
-        except Exception as e:
-            raise e
     def update_complete_task(self, task_id):
         print("Ticking off task...")    
         try:
@@ -184,7 +171,33 @@ class Database_Connection():
             print("Successfully ticked off task!")
         except Exception as e:
             raise e
-
+    
+    def add_new_task(self, player_id, name, difficulty=None, description=None, full_progress=None, reward_xp=None, deadline=None, recurrent=None):
+        try:
+            if name == "":
+                raise Exception("Name can't be empty")
+            if difficulty and (difficulty > 3 or difficulty < 1): 
+                raise Exception("Please put difficulty in bound")
+            if full_progress and full_progress < 0:
+                raise Exception("Full progress can not be negative")
+            current_date = datetime.now()
+            if deadline and deadline < current_date:
+                raise Exception("Deadline can not be in the past")
+            
+            print("Adding new task...")
+            task_id = uuid.uuid7() # using timestamp, already sorted 
+            con = self._get_connection()
+            cur = con.cursor()
+            cur.execute("""
+                        INSERT INTO Task(TaskID, name, difficulty, description, currentProgress, 
+                                            fullProgress, rewardXP, deadline, finish, recurrent, playerID)
+                VALUES (?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?);
+                        """, (str(task_id), name, difficulty, description, full_progress, reward_xp, deadline, recurrent, player_id))
+            con.commit()
+            con.close()
+            print("Successfully added new task!")
+        except Exception as e:
+            raise e
 
 con = Database_Connection()
 con.reset_database()
