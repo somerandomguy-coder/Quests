@@ -192,7 +192,15 @@ class Database_Connection():
                         INSERT INTO Task(TaskID, name, difficulty, description, currentProgress, 
                                             fullProgress, rewardXP, deadline, finish, recurrent, playerID)
                 VALUES (?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?);
-                        """, (str(task_id), name, difficulty, description, full_progress, reward_xp, deadline, recurrent, player_id))
+                        """, (str(task_id), 
+                                name, 
+                                difficulty or 1,      # Default to Easy
+                                description or "", 
+                                full_progress or 1.0, 
+                                reward_xp or 10, 
+                                str(deadline) if deadline else None, 
+                                recurrent or 0, 
+                                player_id))
             con.commit()
             con.close()
             print("Successfully added new task!")
