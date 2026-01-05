@@ -12,6 +12,17 @@ class App(Adw.Application):
     def __init__(self):
         super().__init__(application_id="com.namle.Quests")
 
+        self.win = Adw.ApplicationWindow(application=self)
+        self.win.set_icon_name("task-due-symbolic")
+        self.win.set_title("Quests")
+        self.win.set_default_size(400,300)
+
+        self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing = 10)
+        self.header = Adw.HeaderBar()
+
+        self.add_btn = Gtk.Button(icon_name="list-add-symbolic")
+        self.add_btn.connect("clicked", self._add_task)
+
         self.con = database.Database_Connection()
         res = self.con.fetch_player()
 
@@ -35,37 +46,28 @@ class App(Adw.Application):
         self.content_box.set_margin_bottom(10)
         self.content_box.set_margin_start(10)
         self.content_box.set_margin_end(10)
+
+        self.label = Gtk.Label(label = "Welcome, Adventurer!")
         
+        self.entry = Gtk.Entry(placeholder_text="Enter new quest...")
+        self.entry.connect("activate", self._add_task)
+
     def do_activate(self):
-        win = Adw.ApplicationWindow(application=self)
-        win.set_title("Quests")
-        win.set_default_size(400,300)
-        Gtk.Window.set_default_icon_name("task-due-symbolic")
+        self.header.pack_start(self.add_btn)
 
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing = 10)
+        self.main_box.append(self.header)
+        self.main_box.append(self.entry)
+        self.main_box.append(self.content_box)
 
-        header = Adw.HeaderBar()
-        
-        add_btn = Gtk.Button(icon_name="list-add-symbolic")
-        add_btn.connect("clicked", self._add_task)
-        header.pack_start(add_btn)
-
-        main_box.append(header)
-
-        main_box.append(self.content_box)
-
-        label = Gtk.Label(label = "Welcome, Adventurer!")
-        self.content_box.append(label)
-
-
+        self.content_box.append(self.label)
         self.content_box.append(self.level)
         self.content_box.append(self.xp_label)
         self.content_box.append(self.xp)
 
         self._load_task_and_display()
-            
-        win.set_content(main_box)
-        win.present()
+
+        self.win.set_content(self.main_box)
+        self.win.present()
 
     def _check_and_display_empty_list(self):
         # if the last row is also the header then the list is empty
@@ -86,11 +88,9 @@ class App(Adw.Application):
         new_xp_fraction = (new_xp/new_level)/100
         self.xp.set_fraction(new_xp_fraction)
         self.xp.xp_point = new_xp
-
         self.xp_label.set_text(f"{int(new_xp)}/{new_level*100}")
 
         self.con.update_player_stat(new_xp, new_level, self.player_id)
-
         self.con.update_complete_task(widget.id)
         
         row = widget.get_ancestor(Adw.ActionRow)
@@ -118,12 +118,13 @@ class App(Adw.Application):
         self.tasks_list = Gtk.ListBox()
         self.list_header = Gtk.Label(label="Task name")
         self.tasks_list.append(self.list_header)
-        
 
     def _add_task(self, widget):
-        task_name = "shower"
+        task_name = self.entry.get_text()
+        self.entry.set_text("")
         self.con.add_new_task(self.player_id, task_name, reward_xp=20)
         self._remove_task()
         self._load_task_and_display() 
+
 app = App()
 app.run(sys.argv)
