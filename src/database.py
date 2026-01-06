@@ -1,8 +1,9 @@
 import sqlite3
-from datetime import datetime
 import uuid
+from datetime import datetime
 from sys import exception
 from typing import Any
+
 
 class Database_Connection():
     def __init__(self, filename="database.db"):
@@ -183,6 +184,15 @@ class Database_Connection():
             current_date = datetime.now()
             if deadline and deadline < current_date:
                 raise Exception("Deadline can not be in the past")
+
+            if reward_xp == None:
+                if difficulty == 1:
+                    reward_xp = 10 
+                elif difficulty == 2:
+                    reward_xp = 50
+                elif difficulty == 3: 
+                    reward_xp = 100
+                    
             
             print("Adding new task...")
             task_id = uuid.uuid7() # using timestamp, already sorted 
@@ -201,6 +211,44 @@ class Database_Connection():
                                 str(deadline) if deadline else None, 
                                 recurrent or 0, 
                                 player_id))
+            con.commit()
+            con.close()
+            print("Successfully added new task!")
+        except Exception as e:
+            raise e
+
+
+    def add_multiple_new_task(self, player_id, tasks):
+        try:
+            con = self._get_connection()
+            cur = con.cursor()
+            task_tuples = []
+            for task in tasks:
+                name = task.get("name")
+                description = task.get("description")
+                difficulty = task.get("difficulty") 
+                reward_xp = task.get("reward_xp")
+                if name == "":
+                    raise Exception("Name can't be empty")
+                if difficulty and (difficulty > 3 or difficulty < 1): 
+                    raise Exception("Please put difficulty in bound")
+
+                if reward_xp == None:
+                    if difficulty == 1:
+                        reward_xp = 10 
+                    elif difficulty == 2:
+                        reward_xp = 50
+                    elif difficulty == 3: 
+                        reward_xp = 100
+                        
+                
+                task_id = uuid.uuid7() # using timestamp, already sorted 
+                task_tuples.append((str(task_id), name, difficulty, description,  None, reward_xp, None, None, player_id)) 
+            cur.executemany("""
+                            INSERT INTO Task(TaskID, name, difficulty, description, currentProgress, 
+                                                fullProgress, rewardXP, deadline, finish, recurrent, playerID)
+                    VALUES (?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?);
+                            """, task_tuples)
             con.commit()
             con.close()
             print("Successfully added new task!")

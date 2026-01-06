@@ -1,11 +1,14 @@
-from abc import abstractmethod, ABC
-import engine, database
 import sys
+from parser import parse_markdown_quests
+
 import gi
+
+import database
+import engine
+
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, Gdk
-
+from gi.repository import Adw, Gdk, Gtk
 
 
 class App(Adw.Application):
@@ -19,6 +22,10 @@ class App(Adw.Application):
 
         self.add_btn = Gtk.Button(icon_name="list-add-symbolic")
         self.add_btn.connect("clicked", self._toggle_entry)
+
+        self.import_btn = Gtk.Button(icon_name="document-open-symbolic")
+        self.import_btn.set_tooltip_text("Import Quest Log")
+        self.import_btn.connect("clicked", self._import_file)
 
         self.level = Gtk.Label()
         self.level.level_num = None
@@ -48,13 +55,33 @@ class App(Adw.Application):
 
         self.description_entry = Gtk.Entry(placeholder_text="Enter description (optional)")
         self.description_entry.connect("activate", self._add_task)
+
     def do_activate(self):
+############################## CSS
+        provider = Gtk.CssProvider()
+        provider.load_from_data("""
+            label.level-text { font-size: 24pt; font-weight: bold; color: red; }
+            progressbar trough { min-height: 10px; border-radius: 5px; }
+            progressbar progress { background-color: #3584e4; }
+            row.task-hard { background-color: rgba(255, 0, 0, 0.1); border-left: 5px solid red; }
+            row.task-medium { background-color: rgba(255, 165, 0, 0.1); border-left: 5px solid orange; }
+            row.task-easy { border-left: 5px solid green; }
+            
+        """.encode())
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        self.level.add_css_class("level-text")
+##############################
         self.win = Adw.ApplicationWindow(application=self)
         self.win.set_icon_name("task-due-symbolic")
         self.win.set_title("Quests")
         self.win.set_default_size(400,300)
         
         self.header.pack_start(self.add_btn)
+
+        self.header.pack_end(self.import_btn)
 
         self.header_box.append(self.header)
 
@@ -71,17 +98,31 @@ class App(Adw.Application):
         self.win.set_content(self.main_box)
         self.win.present()
 
-############################## CSS
-        provider = Gtk.CssProvider()
-        provider.load_from_data("""
-            label.level-text { font-size: 24pt; font-weight: bold; color: red; }
-            progressbar trough { min-height: 10px; border-radius: 5px; }
-            progressbar progress { background-color: #3584e4; }
-        """.encode())
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-        self.level.add_css_class("level-text")
+    def _import_file(self, widget):
+        self.chooser = Gtk.FileDialog()
+        self.filter = Gtk.FileFilter()
+        self.filter.add_pattern("*md")
+
+        self.chooser.set_default_filter(self.filter)
+        self.chooser.open(parent = self.win, callback = self._get_the_import_file)
+    
+    def _get_the_import_file(self, source, res):
+        try: 
+            file = source.open_finish(res)
+
+            if file:
+                file_path = file.get_path()
+            else: 
+                raise Exception("There's no file")
+
+            quests = parse_markdown_quests(file_path)
+            self.con.add_multiple_new_task(self.player_id, quests) 
+            self._remove_task()
+            self._load_task_and_display() 
+            
+        except Exception as e:
+            print("Some error happens during reading file:", e)
+        
 
     def _check_and_display_empty_list(self):
         # if the last row is also the header then the list is empty
@@ -134,24 +175,35 @@ class App(Adw.Application):
         else:
             for task in tasks:
                 row = Adw.ExpanderRow(title=task[1])
-                if task[2] == 3: # Hard
-                    row.add_css_class("error") 
-                elif task[2] == 2: # Medium
-                    row.add_css_class("warning")
-                print("diffuculty is",task[2])
-                description_text = task[3]
-                if description_text == "":
-                    description_text= "No description for this task"
+                
+                # Apply our custom CSS classes based on difficulty
+                if task[2] == 3:
+                    row.add_css_class("task-hard")
+                elif task[2] == 2:
+                    row.add_css_class("task-medium")
+                else:
+                    row.add_css_class("task-easy")
+
+                description_text = task[3] or "No description for this task"
                 description = Gtk.Label(label=description_text)
+                description.set_margin_top(10) # Make it look nicer
+                description.set_margin_bottom(10) # Make it look nicer
+                description.set_margin_start(10) # Make it look nicer
+                description.set_margin_end(10) # Make it look nicer
                 row.add_row(description)
-                finish_btn = Gtk.Button(icon_name="object-select-symbolic", label = str(task[6]))
+                
+                finish_btn = Gtk.Button(icon_name="object-select-symbolic", label=str(task[6]))
                 finish_btn.xp_point = task[6]
                 finish_btn.id = task[0]
                 finish_btn.connect("clicked", self._calculate_and_change_display)
                 row.add_suffix(finish_btn)
-                self.tasks_list.append(row)
                 
-        self.content_box.append(self.tasks_list)
+                self.tasks_list.append(row)
+        
+        # Check if tasks_list is already in content_box to avoid "already has a parent" error
+        if self.tasks_list.get_parent() is None:
+            self.content_box.append(self.tasks_list)
+
     
     def _toggle_entry(self, widget):
         if self.entry.get_ancestor(Gtk.Box):
@@ -167,6 +219,8 @@ class App(Adw.Application):
         if self.description_entry.get_ancestor(Gtk.Box) == None:
             self.header_box.append(self.description_entry)
             self.description_entry.grab_focus()
+        else:
+            self.header_box.remove(self.description_entry)
 
     def _remove_task(self):
         # Instead of recreating the ListBox, just empty it
