@@ -56,6 +56,15 @@ class App(Adw.Application):
         self.description_entry = Gtk.Entry(placeholder_text="Enter description (optional)")
         self.description_entry.connect("activate", self._add_task)
 
+        self.stack = Adw.ViewStack(enable_transitions=True)
+        self.character_box = Gtk.Box()
+        self.character_box_label = Gtk.Label(label = "DETAIL STATISTIC")
+        self.character_box.append(self.character_box_label)
+
+        self.view_switcher = Adw.ViewSwitcher(stack=self.stack)
+
+        
+        
     def do_activate(self):
 ############################## CSS
         provider = Gtk.CssProvider()
@@ -86,7 +95,11 @@ class App(Adw.Application):
         self.header_box.append(self.header)
 
         self.main_box.append(self.header_box)
-        self.main_box.append(self.content_box)
+        self.main_box.append(self.view_switcher)
+        self.main_box.append(self.stack)
+
+        self.stack.add_titled(child=self.content_box, title="List")
+        self.stack.add_titled(child=self.character_box, title="Character")
 
         self.content_box.append(self.label)
         self.content_box.append(self.level)
