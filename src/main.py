@@ -8,6 +8,7 @@ import engine
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
+
 from gi.repository import Adw, Gdk, Gtk
 
 
@@ -57,13 +58,63 @@ class App(Adw.Application):
         self.description_entry.connect("activate", self._add_task)
 
         self.stack = Adw.ViewStack(enable_transitions=True)
-        self.character_box = Gtk.Box()
-        self.character_box_label = Gtk.Label(label = "DETAIL STATISTIC")
-        self.character_box.append(self.character_box_label)
+        self.character_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
 
-        self.view_switcher = Adw.ViewSwitcher(stack=self.stack)
+        self.character_box_left = Gtk.ScrolledWindow()
+        self.character_box_left.set_hexpand(True)
+        self.character_box_label_left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        self.character_box_header = Gtk.Label(label = "DETAIL STATISTIC")
+        self.identity_rank_row = Adw.ExpanderRow(title = "Identity and Rank: ")
+        self.character_title = Gtk.Label(label = f"Adventurer Title: Level {self.level.level_num} - Depression fighter")
+        self.character_class = Gtk.Label(label = f"Class: No class")
+        self.join_date = Gtk.Label(label = "Join Date: 1/1/2026")
+        self.identity_rank_row.add_row(self.character_title)
+        self.identity_rank_row.add_row(self.character_class)
+        self.identity_rank_row.add_row(self.join_date)
 
         
+        self.performance_stat= Adw.ExpanderRow(title = "Performance Stats: ")
+        self.quest_complete = Gtk.Label(label = f"Total Quests Completed: None")
+        self.efficiency_rating = Gtk.Label(label = f"Efficiency Rating: {0} tasks/day")
+        self.streak_count = Gtk.Label(label = "Streak Count: 0")
+        self.legendary = Gtk.Label(label = "Number of Legendary Quests Finished: 0")
+        self.performance_stat.add_row(self.quest_complete)
+        self.performance_stat.add_row(self.efficiency_rating)
+        self.performance_stat.add_row(self.streak_count)
+        self.performance_stat.add_row(self.legendary)
+        
+        
+
+        self.character_box_label_left.append(self.character_box_header)
+        self.character_box_label_left.append(self.identity_rank_row)
+        self.character_box_label_left.append(self.performance_stat)
+
+
+        self.character_box_left.set_child(self.character_box_label_left)
+        self.character_box_left.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
+        self.character_box_right = Gtk.Overlay()
+        self.character_box_icon = Gtk.Image()
+        self.character_box_icon.set_from_file("/home/nam/Documents/git-repos/quests/knight.png")
+        self.character_box_icon.set_pixel_size(200)
+        self.character_box_right.set_child(self.character_box_icon)
+        
+        self.overlay_label = Gtk.Label(label="Knight")
+        self.overlay_label.set_valign(Gtk.Align.START)
+        self.character_box_right.add_overlay(self.overlay_label)
+        # The "Overlay" (Level Badge sitting on top)
+        level_badge = Gtk.Label(label="Lvl 1")
+        level_badge.add_css_class("xp-badge") # Reuse your existing CSS!
+        level_badge.set_valign(Gtk.Align.END)   # Position it at the bottom
+        level_badge.set_halign(Gtk.Align.CENTER)
+
+        self.character_box_right.add_overlay(level_badge)
+
+        self.character_box.append(self.character_box_left)
+        self.character_box.append(self.character_box_right)
+        
+
+        self.view_switcher = Adw.ViewSwitcher(stack=self.stack)
         
     def do_activate(self):
 ############################## CSS
@@ -110,6 +161,7 @@ class App(Adw.Application):
 
         self.win.set_content(self.main_box)
         self.win.present()
+##############################
 
     def _import_file(self, widget):
         self.chooser = Gtk.FileDialog()
@@ -136,7 +188,6 @@ class App(Adw.Application):
         except Exception as e:
             print("Some error happens during reading file:", e)
         
-
     def _check_and_display_empty_list(self):
         # if the last row is also the header then the list is empty
         if self.tasks_list.get_last_child().get_child() == self.list_header:
@@ -179,7 +230,6 @@ class App(Adw.Application):
         self.xp.xp_point = res[3]
         
         self.player_id = res[0]
-        
 
     def _load_task_and_display(self):
         tasks = self.con.fetch_unfinished_tasks()
@@ -216,7 +266,6 @@ class App(Adw.Application):
         # Check if tasks_list is already in content_box to avoid "already has a parent" error
         if self.tasks_list.get_parent() is None:
             self.content_box.append(self.tasks_list)
-
     
     def _toggle_entry(self, widget):
         if self.entry.get_ancestor(Gtk.Box):
@@ -227,7 +276,6 @@ class App(Adw.Application):
             self.header_box.append(self.entry)
             self.entry.grab_focus()
             
-    
     def _toggle_description(self, widget):
         if self.description_entry.get_ancestor(Gtk.Box) == None:
             self.header_box.append(self.description_entry)
@@ -267,4 +315,5 @@ class App(Adw.Application):
         
 
 app = App()
+
 app.run(sys.argv)
