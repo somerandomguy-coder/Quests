@@ -46,11 +46,17 @@ class Database_Connection():
         CREATE TABLE IF NOT EXISTS Player(
                         playerID TEXT            PRIMARY KEY,
                         name TEXT,
+                        characterClass TEXT,
                         level INTEGER,
                         XP INTEGER,
                         XPfull INTEGER,
                         lastFinishTask TEXT,
+                        totalQuestCompleted INT, 
+                        easyQuestsCompleted INT,
+                        mediumQuestsCompleted INT,
+                        hardQuestsCompleted INT, 
                         streakCount INTEGER,
+                        joinDate TEXT,
                         savedTimestamp TEXT 
                         );
                         """)
@@ -101,9 +107,9 @@ class Database_Connection():
             # 1. Create the Player (The "Main Character")
             # We use INSERT OR IGNORE so we don't create duplicates every time we run
             cur.execute("""
-                INSERT OR IGNORE INTO Player (playerID, name, level, XP, XPfull, streakCount)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, ("hero_01", "Adventurer", 1, 50, 100, 0))
+                INSERT OR IGNORE INTO Player (playerID, name,characterClass, level, XP, XPfull, streakCount, lastFinishTask, totalQuestCompleted, easyQuestsCompleted, mediumQuestsCompleted, hardQuestsCompleted, joinDate)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, ("hero_01", "Adventurer", "Knight", 1, 50, 100, 0, "01/01/2026", 0, 0, 0, 0, "01/01/2026"))
             # 2. Create some Tasks
             # difficulty: 1=Easy, 2=Medium, 3=Hard
             sample_tasks = [

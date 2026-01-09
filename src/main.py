@@ -37,11 +37,9 @@ class App(Adw.Application):
         self.xp.xp_point = None
         
         self.player_id = None
-        self._sync_player_stat()
 
         self.tasks_list = Gtk.ListBox()
         self.list_header = Gtk.Label(label="Task name")
-        self.tasks_list.append(self.list_header)
 
         self.content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
         self.content_box.set_margin_top(10)
@@ -60,62 +58,47 @@ class App(Adw.Application):
         self.stack = Adw.ViewStack(enable_transitions=True)
         self.character_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
 
-        self.character_box_left = Gtk.ScrolledWindow()
-        self.character_box_left.set_hexpand(True)
-        self.character_box_label_left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        self.character_stats = Gtk.ScrolledWindow()
+        self.character_stats.set_hexpand(True)
+
+        self.character_stats_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
         self.character_box_header = Gtk.Label(label = "DETAIL STATISTIC")
         self.identity_rank_row = Adw.ExpanderRow(title = "Identity and Rank: ")
-        self.character_title = Gtk.Label(label = f"Adventurer Title: Level {self.level.level_num} - Depression fighter")
-        self.character_class = Gtk.Label(label = f"Class: No class")
-        self.join_date = Gtk.Label(label = "Join Date: 1/1/2026")
-        self.identity_rank_row.add_row(self.character_title)
-        self.identity_rank_row.add_row(self.character_class)
-        self.identity_rank_row.add_row(self.join_date)
 
+        self.character_title = Gtk.Label() 
+
+        self.character_class = Gtk.Label()
+        self.character_class.char_class = None
+
+        self.join_date = Gtk.Label()
         
         self.performance_stat= Adw.ExpanderRow(title = "Performance Stats: ")
-        self.quest_complete = Gtk.Label(label = f"Total Quests Completed: None")
-        self.efficiency_rating = Gtk.Label(label = f"Efficiency Rating: {0} tasks/day")
-        self.streak_count = Gtk.Label(label = "Streak Count: 0")
-        self.legendary = Gtk.Label(label = "Number of Legendary Quests Finished: 0")
-        self.performance_stat.add_row(self.quest_complete)
-        self.performance_stat.add_row(self.efficiency_rating)
-        self.performance_stat.add_row(self.streak_count)
-        self.performance_stat.add_row(self.legendary)
+        self.quest_complete = Gtk.Label()
         
+        self.efficiency_rating = Gtk.Label()
+        self.streak_count = Gtk.Label()
+        self.skirmish = Gtk.Label()
+        self.expedition = Gtk.Label()
+        self.legendary = Gtk.Label()
+
+        self.character_stats.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
+        self.character_visual = Gtk.Overlay()
+        self.character_icon = Gtk.Image()
+        self.character_icon.set_from_file("/home/nam/Documents/git-repos/quests/knight.png")
+        self.character_icon.set_pixel_size(200)
         
-
-        self.character_box_label_left.append(self.character_box_header)
-        self.character_box_label_left.append(self.identity_rank_row)
-        self.character_box_label_left.append(self.performance_stat)
-
-
-        self.character_box_left.set_child(self.character_box_label_left)
-        self.character_box_left.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-
-        self.character_box_right = Gtk.Overlay()
-        self.character_box_icon = Gtk.Image()
-        self.character_box_icon.set_from_file("/home/nam/Documents/git-repos/quests/knight.png")
-        self.character_box_icon.set_pixel_size(200)
-        self.character_box_right.set_child(self.character_box_icon)
-        
-        self.overlay_label = Gtk.Label(label="Knight")
-        self.overlay_label.set_valign(Gtk.Align.START)
-        self.character_box_right.add_overlay(self.overlay_label)
+        self.class_badge = Gtk.Label(label="Knight")
+        self.class_badge.set_valign(Gtk.Align.START)
         # The "Overlay" (Level Badge sitting on top)
-        level_badge = Gtk.Label(label="Lvl 1")
-        level_badge.add_css_class("xp-badge") # Reuse your existing CSS!
-        level_badge.set_valign(Gtk.Align.END)   # Position it at the bottom
-        level_badge.set_halign(Gtk.Align.CENTER)
-
-        self.character_box_right.add_overlay(level_badge)
-
-        self.character_box.append(self.character_box_left)
-        self.character_box.append(self.character_box_right)
-        
+        self.level_badge = Gtk.Label(label="Lvl 1")
+        self.level_badge.add_css_class("xp-badge") # Reuse your existing CSS!
+        self.level_badge.set_valign(Gtk.Align.END)   # Position it at the bottom
+        self.level_badge.set_halign(Gtk.Align.CENTER)
 
         self.view_switcher = Adw.ViewSwitcher(stack=self.stack)
         
+        self._sync_player_stat()
     def do_activate(self):
 ############################## CSS
         provider = Gtk.CssProvider()
@@ -149,14 +132,41 @@ class App(Adw.Application):
         self.main_box.append(self.view_switcher)
         self.main_box.append(self.stack)
 
+        self.tasks_list.append(self.list_header)
+
         self.stack.add_titled(child=self.content_box, title="List")
-        self.stack.add_titled(child=self.character_box, title="Character")
 
         self.content_box.append(self.label)
         self.content_box.append(self.level)
         self.content_box.append(self.xp_label)
         self.content_box.append(self.xp)
 
+        self.stack.add_titled(child=self.character_box, title="Character")
+
+        self.identity_rank_row.add_row(self.character_title)
+        self.identity_rank_row.add_row(self.character_class)
+        self.identity_rank_row.add_row(self.join_date)
+
+        self.performance_stat.add_row(self.quest_complete)
+        self.performance_stat.add_row(self.efficiency_rating)
+        self.performance_stat.add_row(self.streak_count)
+        self.performance_stat.add_row(self.skirmish)
+        self.performance_stat.add_row(self.expedition)
+        self.performance_stat.add_row(self.legendary)
+
+        self.character_stats_box.append(self.character_box_header)
+        self.character_stats_box.append(self.identity_rank_row)
+        self.character_stats_box.append(self.performance_stat)
+
+        self.character_stats.set_child(self.character_stats_box)
+
+        self.character_visual.set_child(self.character_icon)
+        self.character_visual.add_overlay(self.class_badge)
+        self.character_visual.add_overlay(self.level_badge)
+
+        self.character_box.append(self.character_stats)
+        self.character_box.append(self.character_visual)
+        
         self._load_task_and_display()
 
         self.win.set_content(self.main_box)
@@ -221,15 +231,28 @@ class App(Adw.Application):
         self.con = database.Database_Connection()
         res = self.con.fetch_player()
 
-        self.level.set_label(str(res[2]))
-        self.level.level_num = res[2]
+        self.level.set_label(str(res[3]))
+        self.level.level_num = res[3]
         
-        self.xp_label.set_label(f"{res[3]}/{res[4]}")
+        self.xp_label.set_label(f"{res[4]}/{res[5]}")
 
-        self.xp.set_fraction(res[3]/res[4])
-        self.xp.xp_point = res[3]
+        self.xp.set_fraction(res[4]/res[5])
+        self.xp.xp_point = res[4]
         
         self.player_id = res[0]
+
+        self.character_title.set_label(f"Adventurer Title: Level {self.level.level_num} - Depression fighter") 
+
+        self.character_class.char_class = res[2]
+        self.character_class.set_label(f"Class: {self.character_class.char_class}")
+        self.join_date.set_label(f"Join Date: {res[13]}")
+        
+        self.quest_complete.set_label(f"Total Quests Completed: {res[7]}")
+        self.efficiency_rating.set_label(f"Efficiency Rating: {0} tasks/day")
+        self.streak_count.set_label(f"Streak Count: {res[11]}")
+        self.skirmish.set_label(f"Number of Skirmish Quests (easy) Finished: {res[8]}")
+        self.expedition.set_label(f"Number of Expedition Quests (medium) Finished: {res[9]}")
+        self.legendary.set_label(f"Number of Legendary Quests (hard) Finished: {res[10]}")
 
     def _load_task_and_display(self):
         tasks = self.con.fetch_unfinished_tasks()
