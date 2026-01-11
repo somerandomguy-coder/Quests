@@ -261,10 +261,30 @@ class Database_Connection():
         except Exception as e:
             raise e
 
+    def add_player(self, name):
+        try:
+            con = self._get_connection()
+            cur = con.cursor()
+            now = datetime.now().strftime("%Y-%m-%d")
+                
+            player_id = uuid.uuid7() # using timestamp, already sorted 
+            cur.execute("""
+                            INSERT INTO Player(playerID, name, characterClass, level, XP, XPfull, lastFinishTask, totalQuestCompleted, easyQuestsCompleted, mediumQuestsCompleted, hardQuestsCompleted, streakCount, joinDate, savedTimestamp
+)
+                    VALUES (?, ?, "Peasant", 0, 0, 100, "", 0, 0, 0, 0, 0, ?, ?);
+                            """, (str(player_id), name, now, now))
+            con.commit()
+            con.close()
+            print("Successfully added new player!")
+        except Exception as e:
+            raise e
+
+
+
 con = Database_Connection()
 con.reset_database()
 con.create_database()
-con.seed_initial_data()
+# con.seed_initial_data()
 #
 print(con.fetch_unfinished_tasks())
 print(con.fetch_player())

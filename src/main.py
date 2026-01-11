@@ -144,7 +144,7 @@ class App(Adw.Application):
         self.character_icon.set_from_file("/home/nam/Documents/git-repos/quests/knight.png")
         self.character_icon.set_pixel_size(200)
         
-        self.class_badge = Gtk.Label(label="Knight")
+        self.class_badge = Gtk.Label()
         self.class_badge.set_valign(Gtk.Align.START)
         # The "Overlay" (Level Badge sitting on top)
         self.level_badge = Gtk.Label(label=f"Lvl {self.level.level_num}")
@@ -153,7 +153,6 @@ class App(Adw.Application):
         self.level_badge.set_halign(Gtk.Align.CENTER)
 
         self.view_switcher = Adw.ViewSwitcher(stack=self.stack)
-
         self.stat_size_group_identity= Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
 
         self.stat_size_group_identity.add_widget(self.character_title_value)
@@ -169,7 +168,6 @@ class App(Adw.Application):
         self.stat_size_group_performance.add_widget(self.legendary_value)
         
        
-        self._sync_player_stat()
     def do_activate(self):
 ############################## CSS
         provider = Gtk.CssProvider()
@@ -200,19 +198,18 @@ class App(Adw.Application):
         self.header_box.append(self.header)
 
         self.main_box.append(self.header_box)
-        self.main_box.append(self.view_switcher)
+
+        self._check_and_display_starting_point()
+
         self.main_box.append(self.stack)
 
         self.tasks_list.append(self.list_header)
 
-        self.stack.add_titled(child=self.content_box, title="List")
 
         self.content_box.append(self.label)
         self.content_box.append(self.level)
         self.content_box.append(self.xp_label)
         self.content_box.append(self.xp)
-
-        self.stack.add_titled(child=self.character_box, title="Character")
 
         self.identity_rank_row.add_row(self.character_title_row)
         self.identity_rank_row.add_row(self.character_class_row)
@@ -243,6 +240,47 @@ class App(Adw.Application):
         self.win.set_content(self.main_box)
         self.win.present()
 ##############################
+
+    def _check_and_display_starting_point(self):
+
+        self.con = database.Database_Connection()
+        char = self.con.fetch_player()
+
+        if char == None:
+            label = Gtk.Label(label="Quests")
+            small_text = Gtk.Label(label="Start your legendary tale today, Adventurer!")
+            self.player_name = Gtk.Entry(placeholder_text="Enter your name...")
+            self.player_name.connect("activate",self._get_name_and_create_player)
+            self.create_char_btn = Gtk.Button(label="Confirm")
+            self.warning = 0
+            self.create_char_btn.connect("clicked", self._get_name_and_create_player)
+
+            self.welcome_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing = 10)
+            self.welcome_box.append(label)
+            self.welcome_box.append(small_text)
+            self.welcome_box.append(self.player_name)
+            self.welcome_box.append(self.create_char_btn)
+
+            self.stack.add_titled(child=self.welcome_box, title="Welcome")
+
+        else:
+            self.stack.add_titled(child=self.content_box, title="List")
+            self.stack.add_titled(child=self.character_box, title="Character")
+            self.stack.remove(self.welcome_box)
+            self.main_box.append(self.view_switcher)
+            self._sync_player_stat()
+
+    def _get_name_and_create_player(self, widget):
+        warning_text = Gtk.Label(label="Name can not be empty")
+        warning_text.add_css_class("error")
+        name = self.player_name.get_text()
+        if name:
+            self.con.add_player(name) 
+            self._check_and_display_starting_point()
+        else:
+            if self.warning == 0:
+                self.welcome_box.insert_child_after(warning_text, self.player_name)
+                self.warning = 1
 
     def _import_file(self, widget):
         self.chooser = Gtk.FileDialog()
@@ -302,6 +340,8 @@ class App(Adw.Application):
         self.con = database.Database_Connection()
         res = self.con.fetch_player()
 
+        self.name = res[1]
+
         self.level.set_label(str(res[3]))
         self.level.level_num = res[3]
         
@@ -326,7 +366,7 @@ class App(Adw.Application):
         self.legendary_value.set_label(f"{res[10]}")
 
         self.level_badge.set_label(f"Lvl {self.level.level_num}")
-
+        self.class_badge.set_label(f"{self.name}")
     def _load_task_and_display(self):
         tasks = self.con.fetch_unfinished_tasks()
         if tasks == []:
