@@ -13,6 +13,7 @@ class Database_Connection():
         print("Connecting to database...")
         try:
             con = sqlite3.connect(self.filename)
+            con.execute("PRAGMA foreign_keys = ON;")
         except Exception as e:
             print("Error while connecting to database!")
             raise e
@@ -73,7 +74,7 @@ class Database_Connection():
                         finish INTEGER,
                         recurrent INTEGER,
                         playerID TEXT,     
-                        FOREIGN KEY(playerID) REFERENCES Player(playerID)
+                        FOREIGN KEY(playerID) REFERENCES Player(playerID) ON DELETE CASCADE
                         );""")
             con.commit()
             print("Successfully created database!")
@@ -279,13 +280,28 @@ class Database_Connection():
         except Exception as e:
             raise e
 
+    def delete_character(self, player_id):
+        print("Deleting Character...")
+        try:
+            con = self._get_connection()
+            cur = con.cursor()
+            cur.execute("""
+            DELETE FROM Player 
+            WHERE PlayerID = ?
+                            """, (player_id, ))
+            con.commit()
+            con.close()
+            print("Successfully deleted character!")
+        except Exception as e:
+            raise e
+        
 
 
 con = Database_Connection()
 con.reset_database()
 con.create_database()
-# con.seed_initial_data()
-#
+con.seed_initial_data()
+con.delete_character("hero_01")
 print(con.fetch_unfinished_tasks())
 print(con.fetch_player())
 # con.update_complete_task('task_01')

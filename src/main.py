@@ -234,12 +234,42 @@ class App(Adw.Application):
 
         self.character_box.append(self.character_stats)
         self.character_box.append(self.character_visual)
+
+        self.setting_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+
+        self.delete_btn = Gtk.Button(label="Delete Character!")
+        self.delete_btn.connect("clicked", self._open_delete_message_dialog)
+        self.delete_btn.set_valign(Gtk.Align.CENTER)
+        self.delete_btn.set_halign(Gtk.Align.CENTER)
+        self.setting_box.append(self.delete_btn)
         
         self._load_task_and_display()
 
         self.win.set_content(self.main_box)
         self.win.present()
 ##############################
+
+    def _open_delete_message_dialog(self, widget):
+        dialog = Adw.AlertDialog()
+        dialog.set_heading("Abandon Adventure?")
+        dialog.set_body("Deleting your character will erase all your levels and legendary deeds. This cannot be undone!")
+        dialog.add_response("cancel", "Keep Fighting")
+        dialog.add_response("delete", "Give Up (Delete)")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.choose(self.win, None, self._on_delete_response, None)
+
+
+    def _on_delete_response(self, dialog, response_id, _data):
+        response = dialog.choose_finish(response_id)
+        if response == "delete":
+            self.con.delete_character(self.player_id) 
+            self._check_and_display_starting_point()
+        
+
+
+
 
     def _check_and_display_starting_point(self):
 
@@ -251,6 +281,7 @@ class App(Adw.Application):
             small_text = Gtk.Label(label="Start your legendary tale today, Adventurer!")
             self.player_name = Gtk.Entry(placeholder_text="Enter your name...")
             self.player_name.connect("activate",self._get_name_and_create_player)
+            self.player_name.grab_focus()
             self.create_char_btn = Gtk.Button(label="Confirm")
             self.warning = 0
             self.create_char_btn.connect("clicked", self._get_name_and_create_player)
@@ -266,6 +297,7 @@ class App(Adw.Application):
         else:
             self.stack.add_titled(child=self.content_box, title="List")
             self.stack.add_titled(child=self.character_box, title="Character")
+            self.stack.add_titled(child=self.setting_box, title="Settings")
             self.stack.remove(self.welcome_box)
             self.main_box.append(self.view_switcher)
             self._sync_player_stat()
