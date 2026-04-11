@@ -10,10 +10,15 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw
 
-import database
-import engine
-from parser import parse_markdown_quests
-from ui_manager import QuestUIManager
+try:
+    from . import database, engine
+    from .parser import parse_markdown_quests
+    from .ui_manager import QuestUIManager
+except ImportError:
+    import database
+    import engine
+    from parser import parse_markdown_quests
+    from ui_manager import QuestUIManager
 
 
 class App(Adw.Application):
