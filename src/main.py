@@ -17,11 +17,7 @@ from ui_manager import QuestUIManager
 
 
 class App(Adw.Application):
-    """Application coordinator for Quests.
-
-    UI construction lives in `ui_manager.py`, while persistence and progression
-    stay in their own modules. This keeps `main.py` focused on orchestration.
-    """
+    """Application coordinator for Quests."""
 
     def __init__(self):
         super().__init__(application_id="com.namle.Quests")
@@ -60,7 +56,7 @@ class App(Adw.Application):
             self.ui.show_welcome_state()
             return
 
-        self.player_id = str(self.player["playerID"])
+        self.player_id = str(self.player["player_id"])
         self.ui.show_main_state()
         self._load_player_state()
         self._load_task_list()
@@ -72,7 +68,7 @@ class App(Adw.Application):
             self.ui.show_welcome_state()
             return
 
-        self.player_id = str(self.player["playerID"])
+        self.player_id = str(self.player["player_id"])
         self.ui.update_player(self.player)
 
     def _load_task_list(self) -> None:
@@ -114,18 +110,26 @@ class App(Adw.Application):
                 )
                 return
 
-            quests = parse_markdown_quests(file_path)
-            imported_count = self.db.add_multiple_new_task(self.player_id, quests)
+            import_result = parse_markdown_quests(file_path)
+            imported_count = self.db.add_multiple_new_task(self.player_id, import_result.quests)
 
             if imported_count == 0:
-                self.ui.show_notice(
-                    "No valid quests were found in that markdown file.",
-                    error=True,
-                )
+                if import_result.issues:
+                    self.ui.show_notice(import_result.issues[0].message, error=True)
+                else:
+                    self.ui.show_notice(
+                        "No valid quests were found in that markdown file.",
+                        error=True,
+                    )
                 return
 
             self._load_task_list()
-            self.ui.show_notice(f"Imported {imported_count} quest(s).")
+            if import_result.warning_count:
+                self.ui.show_notice(
+                    f"Imported {imported_count} quest(s) with {import_result.warning_count} warning(s)."
+                )
+            else:
+                self.ui.show_notice(f"Imported {imported_count} quest(s).")
         except Exception as error:
             self.ui.show_notice(f"Import failed: {error}", error=True)
 
@@ -134,11 +138,11 @@ class App(Adw.Application):
             return
 
         if self.ui.is_task_entry_visible():
-            self.ui.set_task_editor_visible(show_entry=False, show_description=False)
+            self.ui.set_task_editor_visible(show_editor=False)
             return
 
         self.ui.clear_notice()
-        self.ui.set_task_editor_visible(show_entry=True, show_description=False)
+        self.ui.set_task_editor_visible(show_editor=True)
 
     def _toggle_task_description(self, _widget) -> None:
         if self.player_id is None:
@@ -148,30 +152,30 @@ class App(Adw.Application):
             self.ui.show_notice("Quest name can not be empty.", error=True)
             return
 
-        self.ui.clear_notice()
-        self.ui.set_task_editor_visible(show_entry=True, show_description=True)
+        self._create_task(_widget)
 
     def _create_task(self, _widget) -> None:
         if self.player_id is None:
             return
 
-        raw_task_name = self.ui.get_task_name()
-        cleaned_task_name, difficulty, reward_xp = self._resolve_difficulty(raw_task_name)
+        task_name = self.ui.get_task_name().strip()
         description = self.ui.get_task_description().strip()
+        difficulty = self.ui.get_selected_difficulty()
+        reward_xp = self._reward_for_difficulty(difficulty)
 
-        if not cleaned_task_name:
+        if not task_name:
             self.ui.show_notice("Quest name can not be empty.", error=True)
             return
 
         self.db.add_new_task(
             self.player_id,
-            cleaned_task_name,
+            task_name,
             difficulty=difficulty,
             description=description,
             reward_xp=reward_xp,
         )
         self.ui.clear_task_inputs()
-        self.ui.set_task_editor_visible(show_entry=False, show_description=False)
+        self.ui.set_task_editor_visible(show_editor=False)
         self._load_task_list()
         self.ui.show_notice("Quest added.")
 
@@ -180,9 +184,16 @@ class App(Adw.Application):
             return
 
         current_level = max(1, int(self.player.get("level") or 1))
-        current_xp = max(0, int(self.player.get("XP") or 0))
-        xp_gain = max(0, int(getattr(widget, "reward_xp", 0)))
+        current_xp = max(0, int(self.player.get("xp") or 0))
+        streak_count = max(0, int(self.player.get("streak_count") or 0))
+        completed_today = max(0, int(self.player.get("completed_today") or 0))
 
+        xp_gain = engine.calculate_reward_xp(
+            int(getattr(widget, "reward_xp", 0)),
+            difficulty=int(getattr(widget, "task_difficulty", 1)),
+            streak_count=streak_count,
+            completed_today=completed_today,
+        )
         new_level, new_xp = engine.calculate_xp_gain(
             xp_gain,
             current_level,
@@ -207,15 +218,12 @@ class App(Adw.Application):
         self.db.delete_character(self.player_id)
         self._refresh_app_state()
 
-    def _resolve_difficulty(self, task_name: str) -> tuple[str, int, int]:
-        trimmed_name = task_name.strip()
-
-        # TODO: Replace these inline shortcuts with an explicit UI control later.
-        if trimmed_name.endswith("/h"):
-            return trimmed_name[:-2].strip(), 3, 100
-        if trimmed_name.endswith("/m"):
-            return trimmed_name[:-2].strip(), 2, 50
-        return trimmed_name, 1, 10
+    def _reward_for_difficulty(self, difficulty: int) -> int:
+        if difficulty == 3:
+            return 100
+        if difficulty == 2:
+            return 50
+        return 10
 
 
 if __name__ == "__main__":

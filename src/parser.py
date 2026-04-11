@@ -2,69 +2,265 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
-import re
 
 
-QUEST_SEPARATOR_PATTERN = re.compile(r"^\s*---\s*$", re.MULTILINE)
+QUEST_SEPARATOR = "---"
+ALLOWED_DIFFICULTIES = {1, 2, 3}
+SUPPORTED_FIELDS = {
+    "description",
+    "difficulty",
+    "reward",
+    "reward xp",
+    "deadline",
+    "recurrence",
+    "recurrent",
+    "tags",
+}
 
 
-def parse_markdown_quests(file_path: str | Path) -> list[dict[str, int | str]]:
-    """Parse markdown quest blocks into structured task dictionaries.
+@dataclass(frozen=True)
+class QuestImportRecord:
+    name: str
+    description: str = ""
+    difficulty: int = 1
+    reward_xp: int = 10
+    deadline: str | None = None
+    recurrence: str | None = None
+    tags: tuple[str, ...] = ()
 
-    The parser intentionally skips malformed blocks instead of raising so the UI
-    can continue importing valid quests from partially-correct AI output.
+    def to_task_payload(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "difficulty": self.difficulty,
+            "reward_xp": self.reward_xp,
+            "deadline": self.deadline,
+            "recurrence": self.recurrence,
+            "tags": list(self.tags),
+        }
 
-    TODO: Replace regex parsing with a small schema-aware parser.
-    TODO: Return import warnings/errors alongside successful quest records.
-    TODO: Detect duplicates before persistence.
-    TODO: Support more optional fields such as deadline, recurrence, and tags.
-    """
+
+@dataclass(frozen=True)
+class QuestImportIssue:
+    block_index: int
+    message: str
+    quest_name: str | None = None
+
+
+@dataclass
+class QuestImportResult:
+    quests: list[QuestImportRecord] = field(default_factory=list)
+    issues: list[QuestImportIssue] = field(default_factory=list)
+
+    @property
+    def imported_count(self) -> int:
+        return len(self.quests)
+
+    @property
+    def warning_count(self) -> int:
+        return len(self.issues)
+
+
+def parse_markdown_quests(file_path: str | Path) -> QuestImportResult:
+    """Parse markdown quest blocks into structured quest import results."""
 
     content = Path(file_path).read_text(encoding="utf-8")
-    parsed_quests: list[dict[str, int | str]] = []
+    result = QuestImportResult()
+    seen_names: set[str] = set()
 
-    for block in QUEST_SEPARATOR_PATTERN.split(content):
-        quest_data = _parse_quest_block(block)
-        if quest_data is not None:
-            parsed_quests.append(quest_data)
+    for block_index, block in enumerate(_split_blocks(content), start=1):
+        if not block.strip():
+            continue
 
-    return parsed_quests
+        record, issues = _parse_quest_block(block, block_index, seen_names)
+        result.issues.extend(issues)
+        if record is not None:
+            result.quests.append(record)
+            seen_names.add(_normalize_name(record.name))
+
+    return result
 
 
-def _parse_quest_block(block: str) -> dict[str, int | str] | None:
-    name_match = re.search(r"^\s*#\s*QUEST:\s*(.+?)\s*$", block, re.MULTILINE)
-    if not name_match:
-        return None
+def _split_blocks(content: str) -> list[str]:
+    blocks: list[str] = []
+    current_lines: list[str] = []
 
-    name = name_match.group(1).strip()
+    for line in content.splitlines():
+        if line.strip() == QUEST_SEPARATOR:
+            blocks.append("\n".join(current_lines).strip())
+            current_lines = []
+            continue
+        current_lines.append(line)
+
+    if current_lines:
+        blocks.append("\n".join(current_lines).strip())
+
+    return blocks
+
+
+def _parse_quest_block(
+    block: str, block_index: int, seen_names: set[str]
+) -> tuple[QuestImportRecord | None, list[QuestImportIssue]]:
+    issues: list[QuestImportIssue] = []
+    name: str | None = None
+    field_values: dict[str, str] = {}
+
+    for raw_line in block.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if name is None and line.startswith("#"):
+            title = line.lstrip("#").strip()
+            if ":" in title:
+                prefix, value = title.split(":", 1)
+                if prefix.strip().lower() == "quest":
+                    name = value.strip()
+                    continue
+
+        parsed_field = _parse_metadata_line(line)
+        if parsed_field is None:
+            continue
+
+        key, value = parsed_field
+        if key not in SUPPORTED_FIELDS:
+            issues.append(
+                QuestImportIssue(
+                    block_index=block_index,
+                    quest_name=name,
+                    message=f"Ignored unsupported field '{key}'.",
+                )
+            )
+            continue
+        field_values[key] = value
+
     if not name:
+        issues.append(
+            QuestImportIssue(
+                block_index=block_index,
+                quest_name=None,
+                message="Skipped block without a '# QUEST:' title.",
+            )
+        )
+        return None, issues
+
+    normalized_name = _normalize_name(name)
+    if normalized_name in seen_names:
+        issues.append(
+            QuestImportIssue(
+                block_index=block_index,
+                quest_name=name,
+                message="Skipped duplicate quest name in the same import file.",
+            )
+        )
+        return None, issues
+
+    try:
+        difficulty = _parse_difficulty(field_values.get("difficulty"))
+        reward_xp = _parse_reward_xp(
+            field_values.get("reward xp") or field_values.get("reward"),
+            difficulty,
+        )
+        deadline = _parse_deadline(field_values.get("deadline"))
+        recurrence = _parse_recurrence(
+            field_values.get("recurrence") or field_values.get("recurrent")
+        )
+        tags = _parse_tags(field_values.get("tags"))
+    except ValueError as error:
+        issues.append(
+            QuestImportIssue(
+                block_index=block_index,
+                quest_name=name,
+                message=str(error),
+            )
+        )
+        return None, issues
+
+    return (
+        QuestImportRecord(
+            name=name,
+            description=field_values.get("description", ""),
+            difficulty=difficulty,
+            reward_xp=reward_xp,
+            deadline=deadline,
+            recurrence=recurrence,
+            tags=tags,
+        ),
+        issues,
+    )
+
+
+def _parse_metadata_line(line: str) -> tuple[str, str] | None:
+    if not line.startswith(("-", "*")):
         return None
 
-    description_match = re.search(
-        r"\*\*Description\*\*:\s*(.+)", block, re.IGNORECASE
-    )
-    difficulty_match = re.search(
-        r"\*\*Difficulty\*\*:\s*(\d+)", block, re.IGNORECASE
-    )
-    reward_match = re.search(r"\*\*Reward\*\*:\s*(\d+)", block, re.IGNORECASE)
-
-    difficulty = int(difficulty_match.group(1)) if difficulty_match else 1
-    if difficulty not in {1, 2, 3}:
+    body = line[1:].strip()
+    if not body or ":" not in body:
         return None
 
-    reward_xp = int(reward_match.group(1)) if reward_match else _default_reward_xp(
-        difficulty
-    )
+    key_part, value = body.split(":", 1)
+    key = key_part.replace("*", "").strip().lower()
+    return key, value.strip()
+
+
+def _parse_difficulty(raw_value: str | None) -> int:
+    if raw_value is None or raw_value == "":
+        return 1
+
+    difficulty = int(raw_value)
+    if difficulty not in ALLOWED_DIFFICULTIES:
+        raise ValueError("Difficulty must be 1, 2, or 3.")
+    return difficulty
+
+
+def _parse_reward_xp(raw_value: str | None, difficulty: int) -> int:
+    if raw_value is None or raw_value == "":
+        return _default_reward_xp(difficulty)
+
+    reward_value = raw_value.strip().split()[0]
+    reward_xp = int(reward_value)
     if reward_xp <= 0:
+        raise ValueError("Reward XP must be greater than zero.")
+    return reward_xp
+
+
+def _parse_deadline(raw_value: str | None) -> str | None:
+    if raw_value is None or raw_value == "":
         return None
 
-    return {
-        "name": name,
-        "description": description_match.group(1).strip() if description_match else "",
-        "difficulty": difficulty,
-        "reward_xp": reward_xp,
-    }
+    parsed = date.fromisoformat(raw_value.strip())
+    return parsed.isoformat()
+
+
+def _parse_recurrence(raw_value: str | None) -> str | None:
+    if raw_value is None or raw_value == "":
+        return None
+
+    recurrence = raw_value.strip().lower()
+    if recurrence not in {"daily", "weekly", "monthly"}:
+        raise ValueError("Recurrence must be daily, weekly, or monthly.")
+    return recurrence
+
+
+def _parse_tags(raw_value: str | None) -> tuple[str, ...]:
+    if raw_value is None or raw_value == "":
+        return ()
+
+    tags = tuple(
+        dict.fromkeys(
+            tag.strip().lower()
+            for tag in raw_value.split(",")
+            if tag.strip()
+        )
+    )
+    return tags
+
+
+def _normalize_name(name: str) -> str:
+    return " ".join(name.lower().split())
 
 
 def _default_reward_xp(difficulty: int) -> int:
