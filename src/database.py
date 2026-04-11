@@ -1,404 +1,424 @@
+"""SQLite persistence layer for the Quests MVP."""
+
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from pathlib import Path
 import sqlite3
 import uuid
-from datetime import datetime
-from sys import exception
 from typing import Any
 
 
-class Database_Connection:
-    def __init__(self, filename="database.db"):
-        self.filename = filename
+class DatabaseConnection:
+    """Small repository layer for player and task persistence.
+
+    TODO: Introduce schema versioning/migrations before changing table layouts.
+    TODO: Normalize mixed column naming once migrations exist.
+    TODO: Tighten constraints for required fields and allowed value ranges.
+    TODO: Revisit which derived stats should be stored vs computed on demand.
+    """
+
+    def __init__(self, filename: str | Path):
+        self.filename = str(Path(filename))
+
+    def bootstrap(self) -> None:
+        self.create_database()
 
     def _get_connection(self) -> sqlite3.Connection:
-        print("Connecting to database...")
-        try:
-            con = sqlite3.connect(self.filename)
-            con.execute("PRAGMA foreign_keys = ON;")
-        except Exception as e:
-            print("Error while connecting to database!")
-            raise e
-        print("Successfully connecting to database!")
+        con = sqlite3.connect(self.filename)
+        con.row_factory = sqlite3.Row
+        con.execute("PRAGMA foreign_keys = ON;")
         return con
 
     def reset_database(self) -> None:
-        print("Dropping database...")
-        try:
-            con = self._get_connection()
+        with self._get_connection() as con:
             cur = con.cursor()
-            cur.execute("""
-        DROP TABLE IF EXISTS Player;
-                        """)
-            cur.execute("""
-        DROP TABLE IF EXISTS Task;
-                        """)
-            con.commit()
-            print("Successfully drop database!")
-        except Exception as e:
-            raise e
-        con.close()
+            cur.execute("DROP TABLE IF EXISTS Task;")
+            cur.execute("DROP TABLE IF EXISTS Player;")
 
     def create_database(self) -> None:
-        print("Creating database...")
-        try:
-            con = self._get_connection()
+        with self._get_connection() as con:
             cur = con.cursor()
-            cur.execute("""
-        CREATE TABLE IF NOT EXISTS Player(
-                        playerID TEXT            PRIMARY KEY,
-                        name TEXT,
-                        characterClass TEXT,
-                        level INTEGER,
-                        XP INTEGER,
-                        XPfull INTEGER,
-                        lastFinishTask TEXT,
-                        totalQuestCompleted INT, 
-                        easyQuestsCompleted INT,
-                        mediumQuestsCompleted INT,
-                        hardQuestsCompleted INT, 
-                        streakCount INTEGER,
-                        joinDate TEXT,
-                        savedTimestamp TEXT 
-                        );
-                        """)
-            cur.execute("""
-        CREATE TABLE IF NOT EXISTS Task(
-                        TaskID TEXT,
-                        name TEXT,
-                        difficulty INTEGER,
-                        description TEXT,
-                        currentProgress REAL,
-                        fullProgress REAL,
-                        rewardXP INTEGER,
-                        deadline TEXT,
-                        finish INTEGER,
-                        recurrent INTEGER,
-                        playerID TEXT,     
-                        FOREIGN KEY(playerID) REFERENCES Player(playerID) ON DELETE CASCADE
-                        );""")
-            con.commit()
-            print("Successfully created database!")
-        except Exception as e:
-            print("Failed to create database!")
-            raise e
-        con.close()
-
-    def fetch_unfinished_tasks(self) -> list[tuple[Any]]:
-        res = []
-        print("Fetch unfinished tasks!")
-        try:
-            con = self._get_connection()
-            cur = con.cursor()
-            cur.execute("""
-            SELECT * FROM Task 
-                where finish = 0;
-                        """)
-            res = cur.fetchall()
-            print("Successfully fetch database!")
-        except Exception as e:
-            print("Failed to fetch database!")
-            raise e
-        con.close()
-        return res
-
-    def seed_initial_data(self):
-        try:
-            con = self._get_connection()
-            cur = con.cursor()
-            # 1. Create the Player (The "Main Character")
-            # We use INSERT OR IGNORE so we don't create duplicates every time we run
             cur.execute(
                 """
-                INSERT OR IGNORE INTO Player (playerID, name,characterClass, level, XP, XPfull, streakCount, lastFinishTask, totalQuestCompleted, easyQuestsCompleted, mediumQuestsCompleted, hardQuestsCompleted, joinDate)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+                CREATE TABLE IF NOT EXISTS Player(
+                    playerID TEXT PRIMARY KEY,
+                    name TEXT,
+                    characterClass TEXT,
+                    level INTEGER,
+                    XP INTEGER,
+                    XPfull INTEGER,
+                    lastFinishTask TEXT,
+                    totalQuestCompleted INTEGER,
+                    easyQuestsCompleted INTEGER,
+                    mediumQuestsCompleted INTEGER,
+                    hardQuestsCompleted INTEGER,
+                    streakCount INTEGER,
+                    joinDate TEXT,
+                    savedTimestamp TEXT
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS Task(
+                    TaskID TEXT PRIMARY KEY,
+                    name TEXT,
+                    difficulty INTEGER,
+                    description TEXT,
+                    currentProgress REAL,
+                    fullProgress REAL,
+                    rewardXP INTEGER,
+                    deadline TEXT,
+                    finish INTEGER,
+                    recurrent INTEGER,
+                    playerID TEXT,
+                    FOREIGN KEY(playerID) REFERENCES Player(playerID) ON DELETE CASCADE
+                );
+                """
+            )
+
+    def fetch_player(self) -> dict[str, Any] | None:
+        with self._get_connection() as con:
+            cur = con.cursor()
+            cur.execute(
+                """
+                SELECT *
+                FROM Player
+                ORDER BY savedTimestamp DESC
+                LIMIT 1;
+                """
+            )
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    def fetch_unfinished_tasks(self, player_id: str | None = None) -> list[dict[str, Any]]:
+        query = """
+            SELECT *
+            FROM Task
+            WHERE finish = 0
+        """
+        params: tuple[Any, ...] = ()
+        if player_id is not None:
+            query += " AND playerID = ?"
+            params = (player_id,)
+        query += " ORDER BY difficulty DESC, rowid DESC;"
+
+        with self._get_connection() as con:
+            cur = con.cursor()
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+        return [dict(row) for row in rows]
+
+    def add_player(self, name: str) -> str:
+        cleaned_name = name.strip()
+        if not cleaned_name:
+            raise ValueError("Name cannot be empty.")
+
+        player_id = str(uuid.uuid4())
+        today = date.today().isoformat()
+
+        with self._get_connection() as con:
+            cur = con.cursor()
+            cur.execute(
+                """
+                INSERT INTO Player(
+                    playerID,
+                    name,
+                    characterClass,
+                    level,
+                    XP,
+                    XPfull,
+                    lastFinishTask,
+                    totalQuestCompleted,
+                    easyQuestsCompleted,
+                    mediumQuestsCompleted,
+                    hardQuestsCompleted,
+                    streakCount,
+                    joinDate,
+                    savedTimestamp
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
                 (
-                    "hero_01",
-                    "Adventurer",
-                    "Knight",
+                    player_id,
+                    cleaned_name,
+                    "Peasant",
                     1,
-                    50,
+                    0,
                     100,
-                    0,
-                    "01/01/2026",
-                    0,
+                    "",
                     0,
                     0,
                     0,
-                    "01/01/2026",
+                    0,
+                    0,
+                    today,
+                    today,
                 ),
             )
-            # 2. Create some Tasks
-            # difficulty: 1=Easy, 2=Medium, 3=Hard
-            sample_tasks = [
-                (
-                    "task_01",
-                    "Drink Water",
-                    1,
-                    "Hydration is key",
-                    0.0,
-                    1.0,
-                    10,
-                    "2023-12-31",
-                    0,
-                    1,
-                    "hero_01",
-                ),
-                (
-                    "task_02",
-                    "Clean Fedora System",
-                    2,
-                    "Run dnf autoremove",
-                    0.0,
-                    1.0,
-                    50,
-                    "2023-12-31",
-                    0,
-                    2,
-                    "hero_01",
-                ),
-                (
-                    "task_03",
-                    "Finish QuestList MVP",
-                    3,
-                    "Get the list working",
-                    0.5,
-                    1.0,
-                    200,
-                    "2024-01-07",
-                    0,
-                    0,
-                    "hero_01",
-                ),
-            ]
-            cur.executemany(
-                """
-                INSERT OR IGNORE INTO Task (TaskID, name, difficulty, description, currentProgress, 
-                                            fullProgress, rewardXP, deadline, finish, recurrent, playerID)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                sample_tasks,
-            )
-            con.commit()
-            print("Seed data planted!")
-        except Exception as e:
-            print("Failed to seed data!")
-            raise e
-        con.close()
 
-    def fetch_player(self):
-        print("Fetching player information...")
-        try:
-            con = self._get_connection()
-            cur = con.cursor()
-            cur.execute("""
-            SELECT * FROM Player 
-            ORDER BY savedTimestamp DESC 
-            LIMIT 1;
-            """)
-            res = cur.fetchone()
-            print("Successfully fetched player information!")
-        except Exception as e:
-            print("Failed to seed data!")
-            raise e
-        con.close()
-        return res
-
-    def update_player_stat(self, xp, level, player_id):
-        try:
-            print("Update player stat...")
-            con = self._get_connection()
-            cur = con.cursor()
-            cur.execute(
-                """
-                           UPDATE Player
-                           SET XP = ?, Level = ?
-                           WHERE PlayerID = ?;
-                           """,
-                (xp, level, player_id),
-            )
-            con.commit()
-            con.close()
-            print("Successfully update player stat")
-        except Exception as e:
-            raise e
-
-    def update_complete_task(self, task_id):
-        print("Ticking off task...")
-        try:
-            con = self._get_connection()
-            cur = con.cursor()
-            cur.execute(
-                """
-                        UPDATE Task
-                        SET finish = 1 
-                        WHERE TaskID = ?;
-                        """,
-                (task_id,),
-            )
-            con.commit()
-            con.close()
-            print("Successfully ticked off task!")
-        except Exception as e:
-            raise e
+        return player_id
 
     def add_new_task(
         self,
-        player_id,
-        name,
-        difficulty=None,
-        description=None,
-        full_progress=None,
-        reward_xp=None,
-        deadline=None,
-        recurrent=None,
-    ):
-        try:
-            if name == "":
-                raise Exception("Name can't be empty")
-            if difficulty and (difficulty > 3 or difficulty < 1):
-                raise Exception("Please put difficulty in bound")
-            if full_progress and full_progress < 0:
-                raise Exception("Full progress can not be negative")
-            current_date = datetime.now()
-            if deadline and deadline < current_date:
-                raise Exception("Deadline can not be in the past")
+        player_id: str,
+        name: str,
+        difficulty: int | None = None,
+        description: str | None = None,
+        full_progress: float | None = None,
+        reward_xp: int | None = None,
+        deadline: str | None = None,
+        recurrent: int | None = None,
+    ) -> str:
+        cleaned_name = name.strip()
+        if not cleaned_name:
+            raise ValueError("Task name cannot be empty.")
 
-            if reward_xp == None:
-                if difficulty == 1:
-                    reward_xp = 10
-                elif difficulty == 2:
-                    reward_xp = 50
-                elif difficulty == 3:
-                    reward_xp = 100
+        difficulty = difficulty or 1
+        if difficulty not in {1, 2, 3}:
+            raise ValueError("Difficulty must be 1, 2, or 3.")
 
-            print("Adding new task...")
-            task_id = uuid.uuid4()  # using timestamp, already sorted
-            con = self._get_connection()
+        if full_progress is not None and full_progress < 0:
+            raise ValueError("Full progress cannot be negative.")
+
+        task_id = str(uuid.uuid4())
+
+        with self._get_connection() as con:
             cur = con.cursor()
             cur.execute(
                 """
-                        INSERT INTO Task(TaskID, name, difficulty, description, currentProgress, 
-                                            fullProgress, rewardXP, deadline, finish, recurrent, playerID)
-                VALUES (?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?);
-                        """,
-                (
-                    str(task_id),
+                INSERT INTO Task(
+                    TaskID,
                     name,
-                    difficulty or 1,  # Default to Easy
+                    difficulty,
+                    description,
+                    currentProgress,
+                    fullProgress,
+                    rewardXP,
+                    deadline,
+                    finish,
+                    recurrent,
+                    playerID
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    task_id,
+                    cleaned_name,
+                    difficulty,
                     description or "",
-                    full_progress or 1.0,
-                    reward_xp or 10,
-                    str(deadline) if deadline else None,
+                    0.0,
+                    full_progress if full_progress is not None else 1.0,
+                    reward_xp if reward_xp is not None else _default_reward_xp(difficulty),
+                    deadline,
+                    0,
                     recurrent or 0,
                     player_id,
                 ),
             )
-            con.commit()
-            con.close()
-            print("Successfully added new task!")
-        except Exception as e:
-            raise e
 
-    def add_multiple_new_task(self, player_id, tasks):
-        try:
-            con = self._get_connection()
-            cur = con.cursor()
-            task_tuples = []
-            for task in tasks:
-                name = task.get("name")
-                description = task.get("description")
-                difficulty = task.get("difficulty")
-                reward_xp = task.get("reward_xp")
-                if name == "":
-                    raise Exception("Name can't be empty")
-                if difficulty and (difficulty > 3 or difficulty < 1):
-                    raise Exception("Please put difficulty in bound")
+        return task_id
 
-                if reward_xp == None:
-                    if difficulty == 1:
-                        reward_xp = 10
-                    elif difficulty == 2:
-                        reward_xp = 50
-                    elif difficulty == 3:
-                        reward_xp = 100
+    def add_multiple_new_task(
+        self, player_id: str, tasks: list[dict[str, Any]]
+    ) -> int:
+        task_tuples: list[tuple[Any, ...]] = []
 
-                task_id = uuid.uuid4()  # using timestamp, already sorted
-                task_tuples.append(
-                    (
-                        str(task_id),
-                        name,
-                        difficulty,
-                        description,
-                        None,
-                        reward_xp,
-                        None,
-                        None,
-                        player_id,
-                    )
+        for task in tasks:
+            name = str(task.get("name", "")).strip()
+            if not name:
+                continue
+
+            difficulty = int(task.get("difficulty", 1))
+            if difficulty not in {1, 2, 3}:
+                continue
+
+            reward_xp = task.get("reward_xp")
+            reward_xp = (
+                int(reward_xp)
+                if reward_xp is not None
+                else _default_reward_xp(difficulty)
+            )
+            if reward_xp <= 0:
+                continue
+
+            task_tuples.append(
+                (
+                    str(uuid.uuid4()),
+                    name,
+                    difficulty,
+                    str(task.get("description", "") or ""),
+                    0.0,
+                    1.0,
+                    reward_xp,
+                    None,
+                    0,
+                    0,
+                    player_id,
                 )
+            )
+
+        if not task_tuples:
+            return 0
+
+        with self._get_connection() as con:
+            cur = con.cursor()
             cur.executemany(
                 """
-                            INSERT INTO Task(TaskID, name, difficulty, description, currentProgress, 
-                                                fullProgress, rewardXP, deadline, finish, recurrent, playerID)
-                    VALUES (?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?);
-                            """,
+                INSERT INTO Task(
+                    TaskID,
+                    name,
+                    difficulty,
+                    description,
+                    currentProgress,
+                    fullProgress,
+                    rewardXP,
+                    deadline,
+                    finish,
+                    recurrent,
+                    playerID
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
                 task_tuples,
             )
-            con.commit()
-            con.close()
-            print("Successfully added new task!")
-        except Exception as e:
-            raise e
 
-    def add_player(self, name):
-        try:
-            con = self._get_connection()
+        return len(task_tuples)
+
+    def update_player_stat(self, xp: int, level: int, player_id: str) -> None:
+        with self._get_connection() as con:
             cur = con.cursor()
-            now = datetime.now().strftime("%Y-%m-%d")
-
-            player_id = uuid.uuid4()  # using timestamp, already sorted
             cur.execute(
                 """
-                            INSERT INTO Player(playerID, name, characterClass, level, XP, XPfull, lastFinishTask, totalQuestCompleted, easyQuestsCompleted, mediumQuestsCompleted, hardQuestsCompleted, streakCount, joinDate, savedTimestamp
-)
-                    VALUES (?, ?, "Peasant", 0, 0, 100, "", 0, 0, 0, 0, 0, ?, ?);
-                            """,
-                (str(player_id), name, now, now),
+                UPDATE Player
+                SET XP = ?, level = ?, XPfull = ?, savedTimestamp = ?
+                WHERE playerID = ?;
+                """,
+                (xp, level, max(1, level) * 100, datetime.now().isoformat(), player_id),
             )
-            con.commit()
-            con.close()
-            print("Successfully added new player!")
-        except Exception as e:
-            raise e
 
-    def delete_character(self, player_id):
-        print("Deleting Character...")
-        try:
-            con = self._get_connection()
+    def update_complete_task(self, task_id: str) -> None:
+        with self._get_connection() as con:
             cur = con.cursor()
             cur.execute(
                 """
-            DELETE FROM Player 
-            WHERE PlayerID = ?
-                            """,
+                UPDATE Task
+                SET finish = 1
+                WHERE TaskID = ?;
+                """,
+                (task_id,),
+            )
+
+    def complete_task(
+        self, task_id: str, player_id: str, new_xp: int, new_level: int
+    ) -> None:
+        with self._get_connection() as con:
+            cur = con.cursor()
+            cur.execute(
+                """
+                SELECT difficulty
+                FROM Task
+                WHERE TaskID = ? AND playerID = ?;
+                """,
+                (task_id, player_id),
+            )
+            task_row = cur.fetchone()
+            if task_row is None:
+                raise ValueError("Task was not found for the current player.")
+
+            cur.execute(
+                """
+                SELECT lastFinishTask, streakCount
+                FROM Player
+                WHERE playerID = ?;
+                """,
                 (player_id,),
             )
-            con.commit()
-            con.close()
-            print("Successfully deleted character!")
-        except Exception as e:
-            raise e
+            player_row = cur.fetchone()
+            if player_row is None:
+                raise ValueError("Player was not found.")
+
+            streak_count = _calculate_streak(
+                player_row["lastFinishTask"], player_row["streakCount"]
+            )
+            difficulty = int(task_row["difficulty"] or 1)
+
+            cur.execute(
+                """
+                UPDATE Task
+                SET finish = 1
+                WHERE TaskID = ?;
+                """,
+                (task_id,),
+            )
+            cur.execute(
+                """
+                UPDATE Player
+                SET XP = ?,
+                    level = ?,
+                    XPfull = ?,
+                    lastFinishTask = ?,
+                    totalQuestCompleted = COALESCE(totalQuestCompleted, 0) + 1,
+                    easyQuestsCompleted = COALESCE(easyQuestsCompleted, 0) + ?,
+                    mediumQuestsCompleted = COALESCE(mediumQuestsCompleted, 0) + ?,
+                    hardQuestsCompleted = COALESCE(hardQuestsCompleted, 0) + ?,
+                    streakCount = ?,
+                    savedTimestamp = ?
+                WHERE playerID = ?;
+                """,
+                (
+                    new_xp,
+                    new_level,
+                    max(1, new_level) * 100,
+                    date.today().isoformat(),
+                    1 if difficulty == 1 else 0,
+                    1 if difficulty == 2 else 0,
+                    1 if difficulty == 3 else 0,
+                    streak_count,
+                    datetime.now().isoformat(),
+                    player_id,
+                ),
+            )
+
+    def delete_character(self, player_id: str) -> None:
+        with self._get_connection() as con:
+            cur = con.cursor()
+            cur.execute(
+                """
+                DELETE FROM Player
+                WHERE playerID = ?;
+                """,
+                (player_id,),
+            )
 
 
-con = Database_Connection()
-con.reset_database()
-con.create_database()
-con.seed_initial_data()
-con.delete_character("hero_01")
-print(con.fetch_unfinished_tasks())
-print(con.fetch_player())
-# con.update_complete_task('task_01')
-# con.update_complete_task('task_02')
-# con.update_player_xp(90, 'hero_01')
-# print(con.fetch_unfinished_tasks())
-# print(con.fetch_player())
+def _default_reward_xp(difficulty: int) -> int:
+    if difficulty == 3:
+        return 100
+    if difficulty == 2:
+        return 50
+    return 10
+
+
+def _calculate_streak(last_finish_task: str | None, current_streak: int | None) -> int:
+    today = date.today()
+    current_streak = current_streak or 0
+
+    if not last_finish_task:
+        return 1
+
+    try:
+        previous_date = date.fromisoformat(last_finish_task)
+    except ValueError:
+        return 1
+
+    if previous_date == today:
+        return max(1, current_streak)
+    if previous_date == today - timedelta(days=1):
+        return max(1, current_streak) + 1
+    return 1
+
+
+Database_Connection = DatabaseConnection
