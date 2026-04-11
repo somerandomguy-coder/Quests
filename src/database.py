@@ -5,7 +5,7 @@ from sys import exception
 from typing import Any
 
 
-class Database_Connection():
+class Database_Connection:
     def __init__(self, filename="database.db"):
         self.filename = filename
 
@@ -17,9 +17,8 @@ class Database_Connection():
         except Exception as e:
             print("Error while connecting to database!")
             raise e
-        print("Successfully connecting to database!")  
+        print("Successfully connecting to database!")
         return con
-    
 
     def reset_database(self) -> None:
         print("Dropping database...")
@@ -107,28 +106,84 @@ class Database_Connection():
             cur = con.cursor()
             # 1. Create the Player (The "Main Character")
             # We use INSERT OR IGNORE so we don't create duplicates every time we run
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT OR IGNORE INTO Player (playerID, name,characterClass, level, XP, XPfull, streakCount, lastFinishTask, totalQuestCompleted, easyQuestsCompleted, mediumQuestsCompleted, hardQuestsCompleted, joinDate)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, ("hero_01", "Adventurer", "Knight", 1, 50, 100, 0, "01/01/2026", 0, 0, 0, 0, "01/01/2026"))
+            """,
+                (
+                    "hero_01",
+                    "Adventurer",
+                    "Knight",
+                    1,
+                    50,
+                    100,
+                    0,
+                    "01/01/2026",
+                    0,
+                    0,
+                    0,
+                    0,
+                    "01/01/2026",
+                ),
+            )
             # 2. Create some Tasks
             # difficulty: 1=Easy, 2=Medium, 3=Hard
             sample_tasks = [
-                ("task_01", "Drink Water", 1, "Hydration is key", 0.0, 1.0, 10, "2023-12-31", 0, 1, "hero_01"),
-                ("task_02", "Clean Fedora System", 2, "Run dnf autoremove", 0.0, 1.0, 50, "2023-12-31", 0, 2, "hero_01"),
-                ("task_03", "Finish QuestList MVP", 3, "Get the list working", 0.5, 1.0, 200, "2024-01-07", 0, 0, "hero_01")
+                (
+                    "task_01",
+                    "Drink Water",
+                    1,
+                    "Hydration is key",
+                    0.0,
+                    1.0,
+                    10,
+                    "2023-12-31",
+                    0,
+                    1,
+                    "hero_01",
+                ),
+                (
+                    "task_02",
+                    "Clean Fedora System",
+                    2,
+                    "Run dnf autoremove",
+                    0.0,
+                    1.0,
+                    50,
+                    "2023-12-31",
+                    0,
+                    2,
+                    "hero_01",
+                ),
+                (
+                    "task_03",
+                    "Finish QuestList MVP",
+                    3,
+                    "Get the list working",
+                    0.5,
+                    1.0,
+                    200,
+                    "2024-01-07",
+                    0,
+                    0,
+                    "hero_01",
+                ),
             ]
-            cur.executemany("""
+            cur.executemany(
+                """
                 INSERT OR IGNORE INTO Task (TaskID, name, difficulty, description, currentProgress, 
                                             fullProgress, rewardXP, deadline, finish, recurrent, playerID)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, sample_tasks)
+            """,
+                sample_tasks,
+            )
             con.commit()
             print("Seed data planted!")
         except Exception as e:
             print("Failed to seed data!")
             raise e
-        con.close() 
+        con.close()
 
     def fetch_player(self):
         print("Fetching player information...")
@@ -153,11 +208,14 @@ class Database_Connection():
             print("Update player stat...")
             con = self._get_connection()
             cur = con.cursor()
-            cur.execute("""
+            cur.execute(
+                """
                            UPDATE Player
                            SET XP = ?, Level = ?
                            WHERE PlayerID = ?;
-                           """, (xp, level, player_id))
+                           """,
+                (xp, level, player_id),
+            )
             con.commit()
             con.close()
             print("Successfully update player stat")
@@ -165,26 +223,39 @@ class Database_Connection():
             raise e
 
     def update_complete_task(self, task_id):
-        print("Ticking off task...")    
+        print("Ticking off task...")
         try:
             con = self._get_connection()
             cur = con.cursor()
-            cur.execute("""
+            cur.execute(
+                """
                         UPDATE Task
                         SET finish = 1 
                         WHERE TaskID = ?;
-                        """, (task_id,))
+                        """,
+                (task_id,),
+            )
             con.commit()
             con.close()
             print("Successfully ticked off task!")
         except Exception as e:
             raise e
-    
-    def add_new_task(self, player_id, name, difficulty=None, description=None, full_progress=None, reward_xp=None, deadline=None, recurrent=None):
+
+    def add_new_task(
+        self,
+        player_id,
+        name,
+        difficulty=None,
+        description=None,
+        full_progress=None,
+        reward_xp=None,
+        deadline=None,
+        recurrent=None,
+    ):
         try:
             if name == "":
                 raise Exception("Name can't be empty")
-            if difficulty and (difficulty > 3 or difficulty < 1): 
+            if difficulty and (difficulty > 3 or difficulty < 1):
                 raise Exception("Please put difficulty in bound")
             if full_progress and full_progress < 0:
                 raise Exception("Full progress can not be negative")
@@ -194,36 +265,39 @@ class Database_Connection():
 
             if reward_xp == None:
                 if difficulty == 1:
-                    reward_xp = 10 
+                    reward_xp = 10
                 elif difficulty == 2:
                     reward_xp = 50
-                elif difficulty == 3: 
+                elif difficulty == 3:
                     reward_xp = 100
-                    
-            
+
             print("Adding new task...")
-            task_id = uuid.uuid7() # using timestamp, already sorted 
+            task_id = uuid.uuid4()  # using timestamp, already sorted
             con = self._get_connection()
             cur = con.cursor()
-            cur.execute("""
+            cur.execute(
+                """
                         INSERT INTO Task(TaskID, name, difficulty, description, currentProgress, 
                                             fullProgress, rewardXP, deadline, finish, recurrent, playerID)
                 VALUES (?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?);
-                        """, (str(task_id), 
-                                name, 
-                                difficulty or 1,      # Default to Easy
-                                description or "", 
-                                full_progress or 1.0, 
-                                reward_xp or 10, 
-                                str(deadline) if deadline else None, 
-                                recurrent or 0, 
-                                player_id))
+                        """,
+                (
+                    str(task_id),
+                    name,
+                    difficulty or 1,  # Default to Easy
+                    description or "",
+                    full_progress or 1.0,
+                    reward_xp or 10,
+                    str(deadline) if deadline else None,
+                    recurrent or 0,
+                    player_id,
+                ),
+            )
             con.commit()
             con.close()
             print("Successfully added new task!")
         except Exception as e:
             raise e
-
 
     def add_multiple_new_task(self, player_id, tasks):
         try:
@@ -233,29 +307,43 @@ class Database_Connection():
             for task in tasks:
                 name = task.get("name")
                 description = task.get("description")
-                difficulty = task.get("difficulty") 
+                difficulty = task.get("difficulty")
                 reward_xp = task.get("reward_xp")
                 if name == "":
                     raise Exception("Name can't be empty")
-                if difficulty and (difficulty > 3 or difficulty < 1): 
+                if difficulty and (difficulty > 3 or difficulty < 1):
                     raise Exception("Please put difficulty in bound")
 
                 if reward_xp == None:
                     if difficulty == 1:
-                        reward_xp = 10 
+                        reward_xp = 10
                     elif difficulty == 2:
                         reward_xp = 50
-                    elif difficulty == 3: 
+                    elif difficulty == 3:
                         reward_xp = 100
-                        
-                
-                task_id = uuid.uuid7() # using timestamp, already sorted 
-                task_tuples.append((str(task_id), name, difficulty, description,  None, reward_xp, None, None, player_id)) 
-            cur.executemany("""
+
+                task_id = uuid.uuid4()  # using timestamp, already sorted
+                task_tuples.append(
+                    (
+                        str(task_id),
+                        name,
+                        difficulty,
+                        description,
+                        None,
+                        reward_xp,
+                        None,
+                        None,
+                        player_id,
+                    )
+                )
+            cur.executemany(
+                """
                             INSERT INTO Task(TaskID, name, difficulty, description, currentProgress, 
                                                 fullProgress, rewardXP, deadline, finish, recurrent, playerID)
                     VALUES (?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?);
-                            """, task_tuples)
+                            """,
+                task_tuples,
+            )
             con.commit()
             con.close()
             print("Successfully added new task!")
@@ -267,13 +355,16 @@ class Database_Connection():
             con = self._get_connection()
             cur = con.cursor()
             now = datetime.now().strftime("%Y-%m-%d")
-                
-            player_id = uuid.uuid7() # using timestamp, already sorted 
-            cur.execute("""
+
+            player_id = uuid.uuid4()  # using timestamp, already sorted
+            cur.execute(
+                """
                             INSERT INTO Player(playerID, name, characterClass, level, XP, XPfull, lastFinishTask, totalQuestCompleted, easyQuestsCompleted, mediumQuestsCompleted, hardQuestsCompleted, streakCount, joinDate, savedTimestamp
 )
                     VALUES (?, ?, "Peasant", 0, 0, 100, "", 0, 0, 0, 0, 0, ?, ?);
-                            """, (str(player_id), name, now, now))
+                            """,
+                (str(player_id), name, now, now),
+            )
             con.commit()
             con.close()
             print("Successfully added new player!")
@@ -285,16 +376,18 @@ class Database_Connection():
         try:
             con = self._get_connection()
             cur = con.cursor()
-            cur.execute("""
+            cur.execute(
+                """
             DELETE FROM Player 
             WHERE PlayerID = ?
-                            """, (player_id, ))
+                            """,
+                (player_id,),
+            )
             con.commit()
             con.close()
             print("Successfully deleted character!")
         except Exception as e:
             raise e
-        
 
 
 con = Database_Connection()
