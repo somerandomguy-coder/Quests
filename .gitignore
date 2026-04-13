@@ -210,3 +210,5 @@ __marimo__/
 *.db
 
 !main.spec
+src/__pycache__/engine.cpython-314.pyc
+src/database.db

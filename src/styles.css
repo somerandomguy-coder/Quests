@@ -12,3 +12,26 @@ box.focus-card {
     border-radius: 12px;
     padding: 8px;
 }
+label.importance-chip {
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-weight: 700;
+    min-width: 64px;
+}
+label.importance-high {
+    background-color: rgba(192, 28, 40, 0.14);
+    color: #9a031e;
+}
+label.importance-medium {
+    background-color: rgba(233, 196, 106, 0.18);
+    color: #8d6a00;
+}
+label.importance-low {
+    background-color: rgba(42, 157, 143, 0.14);
+    color: #1f6f64;
+}
+expander {
+    border-radius: 10px;
+    background-color: rgba(250, 250, 248, 0.55);
+    padding: 6px;
+}

@@ -18,6 +18,9 @@ SUPPORTED_FIELDS = {
     "recurrence",
     "recurrent",
     "tags",
+    "important",
+    "importance",
+    "important level",
 }
 
 
@@ -30,6 +33,7 @@ class QuestImportRecord:
     deadline: str | None = None
     recurrence: str | None = None
     tags: tuple[str, ...] = ()
+    important_level: int = 50
 
     def to_task_payload(self) -> dict[str, object]:
         return {
@@ -40,6 +44,7 @@ class QuestImportRecord:
             "deadline": self.deadline,
             "recurrence": self.recurrence,
             "tags": list(self.tags),
+            "important_level": self.important_level,
         }
 
 
@@ -169,6 +174,11 @@ def _parse_quest_block(
             field_values.get("recurrence") or field_values.get("recurrent")
         )
         tags = _parse_tags(field_values.get("tags"))
+        important_level = _parse_importance(
+            field_values.get("important level")
+            or field_values.get("importance")
+            or field_values.get("important")
+        )
     except ValueError as error:
         issues.append(
             QuestImportIssue(
@@ -188,6 +198,7 @@ def _parse_quest_block(
             deadline=deadline,
             recurrence=recurrence,
             tags=tags,
+            important_level=important_level,
         ),
         issues,
     )
@@ -257,6 +268,16 @@ def _parse_tags(raw_value: str | None) -> tuple[str, ...]:
         )
     )
     return tags
+
+
+def _parse_importance(raw_value: str | None) -> int:
+    if raw_value is None or raw_value == "":
+        return 50
+
+    important_level = int(raw_value.strip().split()[0])
+    if not 0 <= important_level <= 100:
+        raise ValueError("Important level must be between 0 and 100.")
+    return important_level
 
 
 def _normalize_name(name: str) -> str:

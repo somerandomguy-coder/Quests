@@ -19,6 +19,7 @@ class QuestUIManager:
         self.asset_dir = Path(asset_dir)
         self.window: Adw.ApplicationWindow | None = None
         self._page_cache: dict[str, Gtk.Widget] = {}
+        self._task_list_mode = "flat"
 
     def build_window(
         self,
@@ -30,13 +31,14 @@ class QuestUIManager:
         on_task_description_activate,
         on_delete_character,
         on_create_player,
+        on_magical_sort,
     ) -> Adw.ApplicationWindow:
         self._install_css()
 
         self.window = Adw.ApplicationWindow(application=application)
         self.window.set_icon_name("task-due-symbolic")
         self.window.set_title("Quests")
-        self.window.set_default_size(720, 560)
+        self.window.set_default_size(760, 620)
 
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -53,7 +55,7 @@ class QuestUIManager:
             on_task_description_activate,
         )
         self._build_welcome_page(on_create_player)
-        self._build_list_page()
+        self._build_list_page(on_magical_sort)
         self._page_cache["character"] = self._build_character_page()
         self._page_cache["settings"] = self._build_settings_page(on_delete_character)
 
@@ -72,9 +74,11 @@ class QuestUIManager:
         self.view_switcher.set_visible(False)
         self.add_btn.set_sensitive(False)
         self.import_btn.set_sensitive(False)
+        self.magical_sort_btn.set_sensitive(False)
         self.delete_btn.set_sensitive(False)
         self.set_task_editor_visible(show_editor=False)
         self.clear_notice()
+        self._set_task_list_mode("flat")
         self.player_name.grab_focus()
         self.stack.set_visible_child(self.welcome_box)
 
@@ -84,6 +88,7 @@ class QuestUIManager:
         self.view_switcher.set_visible(True)
         self.add_btn.set_sensitive(True)
         self.import_btn.set_sensitive(True)
+        self.magical_sort_btn.set_sensitive(True)
         self.delete_btn.set_sensitive(True)
         self.stack.set_visible_child(self.content_box)
 
@@ -93,25 +98,54 @@ class QuestUIManager:
         self._update_character_metrics(player)
 
     def render_tasks(self, tasks: list[dict], on_complete_task) -> None:
-        while child := self.tasks_list.get_first_child():
-            self.tasks_list.remove(child)
+        self._set_task_list_mode("flat")
+        self._clear_list_box(self.tasks_list)
 
         if not tasks:
-            self.focus_title.set_label("No active quests")
-            self.focus_detail.set_label("Take a break, or add one gentle quest to restart momentum.")
+            self._set_focus_card(None, message="Take a break, or add one gentle quest to restart momentum.")
             self.tasks_list.append(
                 self._build_empty_state_row("No active quests. Take a rest, Adventurer!")
             )
             return
 
-        suggested_task = tasks[0]
-        self.focus_title.set_label(f"Focus quest: {suggested_task.get('name', 'Untitled Quest')}")
-        self.focus_detail.set_label(
-            "Start with the top quest to reduce choice overload, then keep the streak going."
-        )
-
+        self._set_focus_card(tasks[0], message="Start with the top quest to reduce choice overload, then keep the streak going.")
         for index, task in enumerate(tasks):
             self.tasks_list.append(self._build_task_row(task, on_complete_task, is_focus=index == 0))
+
+    def render_mission_tasks(
+        self,
+        mission_tasks: list[dict],
+        backlog_tasks: list[dict],
+        on_complete_task,
+    ) -> None:
+        self._set_task_list_mode("mission")
+        self._clear_list_box(self.current_mission_list)
+        self._clear_list_box(self.quest_backlog_list)
+
+        if mission_tasks:
+            self._set_focus_card(
+                mission_tasks[0],
+                message="This is the quest at the front of your current mission queue.",
+            )
+            for index, task in enumerate(mission_tasks):
+                self.current_mission_list.append(
+                    self._build_task_row(task, on_complete_task, is_focus=index == 0)
+                )
+        else:
+            self._set_focus_card(None, message="No active mission yet. Try magical sorting once you have a few quests.")
+            self.current_mission_list.append(
+                self._build_empty_state_row("No quests selected for the current mission.")
+            )
+
+        if backlog_tasks:
+            for task in backlog_tasks:
+                self.quest_backlog_list.append(
+                    self._build_task_row(task, on_complete_task, is_focus=False)
+                )
+        else:
+            self.quest_backlog_list.append(
+                self._build_empty_state_row("No quests waiting in the backlog.")
+            )
 
     def get_player_name(self) -> str:
         return self.player_name.get_text()
@@ -125,12 +159,28 @@ class QuestUIManager:
     def get_task_description(self) -> str:
         return self.task_description_entry.get_text()
 
+    def get_task_tags(self) -> list[str]:
+        raw_tags = self.task_tags_entry.get_text().strip()
+        if not raw_tags:
+            return []
+        return [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
+
+    def get_task_deadline(self) -> str | None:
+        deadline = self.task_deadline_entry.get_text().strip()
+        return deadline or None
+
+    def get_task_importance(self) -> int:
+        return self.importance_spin.get_value_as_int()
+
     def get_selected_difficulty(self) -> int:
         return int(self.difficulty_dropdown.get_selected()) + 1
 
     def clear_task_inputs(self) -> None:
         self.task_name_entry.set_text("")
         self.task_description_entry.set_text("")
+        self.task_tags_entry.set_text("")
+        self.task_deadline_entry.set_text("")
+        self.importance_spin.set_value(50)
         self.difficulty_dropdown.set_selected(0)
 
     def set_task_editor_visible(self, *, show_editor: bool) -> None:
@@ -195,10 +245,16 @@ class QuestUIManager:
         self.task_name_entry.set_hexpand(True)
 
         self.task_description_entry = Gtk.Entry(
-            placeholder_text="Enter description (optional)"
+            placeholder_text="Add a quick description (optional)"
         )
         self.task_description_entry.connect("activate", on_task_description_activate)
         self.task_description_entry.set_hexpand(True)
+
+        self.task_tags_entry = Gtk.Entry(placeholder_text="Tags: study, chores, admin")
+        self.task_tags_entry.set_hexpand(True)
+
+        self.task_deadline_entry = Gtk.Entry(placeholder_text="Deadline: YYYY-MM-DD")
+        self.task_deadline_entry.set_hexpand(True)
 
         self.difficulty_store = Gtk.StringList.new(
             ["Skirmish (Easy)", "Expedition (Medium)", "Legendary (Hard)"]
@@ -206,15 +262,35 @@ class QuestUIManager:
         self.difficulty_dropdown = Gtk.DropDown.new(self.difficulty_store, None)
         self.difficulty_dropdown.set_selected(0)
 
+        self.importance_spin = Gtk.SpinButton.new_with_range(0, 100, 5)
+        self.importance_spin.set_value(50)
+        self.importance_spin.set_numeric(True)
+        self.importance_spin.set_tooltip_text("How important is this quest? 0 to 100")
+
+        importance_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        importance_label = Gtk.Label(label="Importance", xalign=0)
+        importance_box.append(importance_label)
+        importance_box.append(self.importance_spin)
+
         self.quick_add_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         row_one = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         row_one.append(self.task_name_entry)
         row_one.append(self.difficulty_dropdown)
+        row_one.append(importance_box)
+
+        row_two = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row_two.append(self.task_description_entry)
+
+        row_three = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row_three.append(self.task_tags_entry)
+        row_three.append(self.task_deadline_entry)
+
         self.quick_add_box.append(row_one)
-        self.quick_add_box.append(self.task_description_entry)
+        self.quick_add_box.append(row_two)
+        self.quick_add_box.append(row_three)
 
         helper = Gtk.Label(
-            label="Choose a quest difficulty directly instead of typing command suffixes.",
+            label="Set difficulty, importance, deadline, and tags up front so magical sorting has enough signal.",
             xalign=0,
         )
         helper.add_css_class("helper-text")
@@ -222,7 +298,6 @@ class QuestUIManager:
 
         self.header.pack_start(self.add_btn)
         self.header.pack_end(self.import_btn)
-
         self.header_box.append(self.header)
 
     def _build_welcome_page(self, on_create_player) -> None:
@@ -251,19 +326,19 @@ class QuestUIManager:
         self.welcome_box.append(self.player_name_error)
         self.welcome_box.append(self.create_char_btn)
 
-    def _build_list_page(self) -> None:
+    def _build_list_page(self, on_magical_sort) -> None:
         self.content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
         self.content_box.set_margin_top(16)
         self.content_box.set_margin_bottom(16)
         self.content_box.set_margin_start(16)
         self.content_box.set_margin_end(16)
 
-        self.label = Gtk.Label(label="Welcome, Adventurer!")
-        self.level_value = Gtk.Label()
+        self.label = Gtk.Label(label="Welcome, Adventurer!", xalign=0)
+        self.level_value = Gtk.Label(xalign=0)
         self.level_value.level_num = 1
         self.level_value.add_css_class("level-text")
 
-        self.xp_label = Gtk.Label()
+        self.xp_label = Gtk.Label(xalign=0)
         self.xp_bar = Gtk.ProgressBar()
         self.xp_bar.xp_point = 0
 
@@ -282,9 +357,40 @@ class QuestUIManager:
         self.focus_card.append(self.focus_title)
         self.focus_card.append(self.focus_detail)
 
-        self.tasks_header = Gtk.Label(label="Task name", xalign=0)
+        task_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.tasks_header = Gtk.Label(label="Quest Log", xalign=0)
+        self.tasks_header.set_hexpand(True)
+        self.magical_sort_btn = Gtk.Button(label="Magical Sorting")
+        self.magical_sort_btn.connect("clicked", on_magical_sort)
+        task_header_box.append(self.tasks_header)
+        task_header_box.append(self.magical_sort_btn)
+
         self.tasks_list = Gtk.ListBox()
         self.tasks_list.set_selection_mode(Gtk.SelectionMode.NONE)
+
+        self.current_mission_list = Gtk.ListBox()
+        self.current_mission_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.quest_backlog_list = Gtk.ListBox()
+        self.quest_backlog_list.set_selection_mode(Gtk.SelectionMode.NONE)
+
+        mission_inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        mission_inner.append(self.current_mission_list)
+        self.current_mission_expander = Gtk.Expander(label="Current Mission")
+        self.current_mission_expander.set_expanded(True)
+        self.current_mission_expander.set_child(mission_inner)
+
+        backlog_inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        backlog_inner.append(self.quest_backlog_list)
+        self.quest_backlog_expander = Gtk.Expander(label="Quest Backlog")
+        self.quest_backlog_expander.set_expanded(True)
+        self.quest_backlog_expander.set_child(backlog_inner)
+
+        self.flat_tasks_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.flat_tasks_box.append(self.tasks_list)
+
+        self.mission_sections_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.mission_sections_box.append(self.current_mission_expander)
+        self.mission_sections_box.append(self.quest_backlog_expander)
 
         self.content_box.append(self.label)
         self.content_box.append(self.level_value)
@@ -292,8 +398,11 @@ class QuestUIManager:
         self.content_box.append(self.xp_bar)
         self.content_box.append(self.notice_label)
         self.content_box.append(self.focus_card)
-        self.content_box.append(self.tasks_header)
-        self.content_box.append(self.tasks_list)
+        self.content_box.append(task_header_box)
+        self.content_box.append(self.flat_tasks_box)
+        self.content_box.append(self.mission_sections_box)
+
+        self._set_task_list_mode("flat")
 
     def _build_character_page(self) -> Gtk.Widget:
         self.character_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
@@ -402,6 +511,7 @@ class QuestUIManager:
         level = max(1, int(player.get("level") or 1))
         char_class = str(player.get("character_class") or "Peasant")
 
+        self.label.set_label(f"Welcome, {name}!")
         self.character_title_value.set_label(f"Level {level} - Momentum Builder")
         self.character_class_value.set_label(char_class)
         self.join_date_value.set_label(str(player.get("join_date") or "Unknown"))
@@ -431,6 +541,7 @@ class QuestUIManager:
     ) -> Adw.ExpanderRow:
         row = Adw.ExpanderRow(title=str(task.get("name") or "Untitled Quest"))
         difficulty = int(task.get("difficulty") or 1)
+        important_level = int(task.get("important_level") or 0)
 
         if difficulty == 3:
             row.add_css_class("task-hard")
@@ -442,26 +553,24 @@ class QuestUIManager:
         if is_focus:
             row.add_css_class("task-focus")
 
-        tags = ", ".join(task.get("tags", []))
-        recurrence = task.get("recurrence", "none")
-        details = [str(task.get("description") or "No description for this task")]
-        if task.get("deadline"):
-            details.append(f"Deadline: {task['deadline']}")
-        if recurrence and recurrence != "none":
-            details.append(f"Recurs: {recurrence}")
-        if tags:
-            details.append(f"Tags: {tags}")
+        row.set_subtitle(self._build_task_meta_line(task))
 
-        description = Gtk.Label(
-            label="\n".join(details),
-            wrap=True,
-            xalign=0,
-        )
+        description_text = str(task.get("description") or "No description for this task")
+        recurrence = task.get("recurrence", "none")
+        if recurrence and recurrence != "none":
+            description_text = f"{description_text}\n\nRepeats: {recurrence}"
+
+        description = Gtk.Label(label=description_text, wrap=True, xalign=0)
         description.set_margin_top(10)
         description.set_margin_bottom(10)
         description.set_margin_start(10)
         description.set_margin_end(10)
         row.add_row(description)
+
+        importance_badge = Gtk.Label(label=f"IMP {important_level}")
+        importance_badge.add_css_class("importance-chip")
+        importance_badge.add_css_class(self._importance_css_class(important_level))
+        row.add_suffix(importance_badge)
 
         finish_btn = Gtk.Button(
             icon_name="object-select-symbolic",
@@ -475,11 +584,74 @@ class QuestUIManager:
 
         return row
 
+    def _build_task_meta_line(self, task: dict) -> str:
+        bits: list[str] = []
+        bits.append(f"Importance {int(task.get('important_level') or 0)}")
+        bits.append(f"Difficulty {self._difficulty_label(int(task.get('difficulty') or 1))}")
+
+        deadline = task.get("deadline")
+        days_until_deadline = task.get("days_until_deadline")
+        if deadline:
+            if days_until_deadline is None:
+                bits.append(f"Due {deadline}")
+            elif days_until_deadline < 0:
+                bits.append(f"Overdue by {abs(int(days_until_deadline))}d")
+            elif days_until_deadline == 0:
+                bits.append("Due today")
+            else:
+                bits.append(f"Due in {int(days_until_deadline)}d")
+        else:
+            bits.append("No deadline")
+
+        tags = task.get("tags") or []
+        if tags:
+            bits.append(f"Tags {', '.join(tags)}")
+
+        return "  |  ".join(bits)
+
+    def _difficulty_label(self, difficulty: int) -> str:
+        if difficulty == 3:
+            return "Hard"
+        if difficulty == 2:
+            return "Medium"
+        return "Easy"
+
+    def _importance_css_class(self, important_level: int) -> str:
+        if important_level >= 75:
+            return "importance-high"
+        if important_level >= 40:
+            return "importance-medium"
+        return "importance-low"
+
+    def _set_focus_card(self, task: dict | None, *, message: str) -> None:
+        if task is None:
+            self.focus_title.set_label("No active quests")
+            self.focus_detail.set_label(message)
+            return
+
+        self.focus_title.set_label(f"Focus quest: {task.get('name', 'Untitled Quest')}")
+        self.focus_detail.set_label(message)
+
     def _build_empty_state_row(self, message: str) -> Gtk.Label:
         empty_label = Gtk.Label(label=message, wrap=True, xalign=0)
         empty_label.set_margin_top(8)
         empty_label.set_margin_bottom(8)
         return empty_label
+
+    def _clear_list_box(self, list_box: Gtk.ListBox) -> None:
+        while child := list_box.get_first_child():
+            list_box.remove(child)
+
+    def _set_task_list_mode(self, mode: str) -> None:
+        self._task_list_mode = mode
+        self.flat_tasks_box.set_visible(mode == "flat")
+        self.mission_sections_box.set_visible(mode == "mission")
+        if mode == "mission":
+            self.tasks_header.set_label("Mission Board")
+            self.magical_sort_btn.set_label("Refresh Mission")
+        else:
+            self.tasks_header.set_label("Quest Log")
+            self.magical_sort_btn.set_label("Magical Sorting")
 
     def _set_optional_widget_visible(self, widget: Gtk.Widget, visible: bool) -> None:
         if visible and widget.get_parent() is None:

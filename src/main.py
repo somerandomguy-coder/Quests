@@ -35,6 +35,7 @@ class App(Adw.Application):
         self.window = None
         self.player: dict | None = None
         self.player_id: str | None = None
+        self.mission_view_active = False
 
     def do_activate(self):
         if self.window is None:
@@ -51,6 +52,7 @@ class App(Adw.Application):
             on_task_description_activate=self._create_task,
             on_delete_character=self._open_delete_message_dialog,
             on_create_player=self._create_player,
+            on_magical_sort=self._activate_magical_sorting,
         )
         self._refresh_app_state()
 
@@ -58,6 +60,7 @@ class App(Adw.Application):
         self.player = self.db.fetch_player()
         if self.player is None:
             self.player_id = None
+            self.mission_view_active = False
             self.ui.show_welcome_state()
             return
 
@@ -70,6 +73,7 @@ class App(Adw.Application):
         self.player = self.db.fetch_player()
         if self.player is None:
             self.player_id = None
+            self.mission_view_active = False
             self.ui.show_welcome_state()
             return
 
@@ -82,6 +86,11 @@ class App(Adw.Application):
             return
 
         tasks = self.db.fetch_unfinished_tasks(self.player_id)
+        if self.mission_view_active:
+            mission_tasks, backlog_tasks = engine.split_tasks_for_current_mission(tasks)
+            self.ui.render_mission_tasks(mission_tasks, backlog_tasks, self._complete_task)
+            return
+
         self.ui.render_tasks(tasks, self._complete_task)
 
     def _create_player(self, _widget) -> None:
@@ -91,6 +100,7 @@ class App(Adw.Application):
             return
 
         self.ui.set_player_name_error_visible(False)
+        self.mission_view_active = False
         self.db.add_player(name)
         self._refresh_app_state()
 
@@ -165,6 +175,9 @@ class App(Adw.Application):
 
         task_name = self.ui.get_task_name().strip()
         description = self.ui.get_task_description().strip()
+        tags = self.ui.get_task_tags()
+        deadline = self.ui.get_task_deadline()
+        important_level = self.ui.get_task_importance()
         difficulty = self.ui.get_selected_difficulty()
         reward_xp = self._reward_for_difficulty(difficulty)
 
@@ -172,17 +185,33 @@ class App(Adw.Application):
             self.ui.show_notice("Quest name can not be empty.", error=True)
             return
 
-        self.db.add_new_task(
-            self.player_id,
-            task_name,
-            difficulty=difficulty,
-            description=description,
-            reward_xp=reward_xp,
-        )
+        try:
+            self.db.add_new_task(
+                self.player_id,
+                task_name,
+                difficulty=difficulty,
+                important_level=important_level,
+                description=description,
+                reward_xp=reward_xp,
+                deadline=deadline,
+                tags=tags,
+            )
+        except ValueError as error:
+            self.ui.show_notice(str(error), error=True)
+            return
+
         self.ui.clear_task_inputs()
         self.ui.set_task_editor_visible(show_editor=False)
         self._load_task_list()
         self.ui.show_notice("Quest added.")
+
+    def _activate_magical_sorting(self, _widget) -> None:
+        if self.player_id is None:
+            return
+
+        self.mission_view_active = True
+        self._load_task_list()
+        self.ui.show_notice("Current Mission refreshed from importance, urgency, and difficulty.")
 
     def _complete_task(self, widget) -> None:
         if self.player is None or self.player_id is None:

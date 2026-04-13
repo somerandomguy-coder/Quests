@@ -8,8 +8,14 @@ import sqlite3
 import uuid
 from typing import Any
 
+try:
+    from . import engine
+except ImportError:
+    import engine
 
-LATEST_SCHEMA_VERSION = 1
+
+LATEST_SCHEMA_VERSION = 2
+DEFAULT_IMPORTANT_LEVEL = 50
 
 
 class DatabaseConnection:
@@ -33,7 +39,16 @@ class DatabaseConnection:
         existing_tables = set(self._list_tables(con))
         current_version = self._get_user_version(con)
 
-        if {"player", "task"}.issubset(existing_tables) and current_version >= LATEST_SCHEMA_VERSION:
+        if not existing_tables:
+            self._create_schema(con)
+            self._set_user_version(con, LATEST_SCHEMA_VERSION)
+            return
+
+        if {"player", "task"}.issubset(existing_tables):
+            task_columns = set(self._get_table_columns(con, "task"))
+            if "important_level" not in task_columns:
+                self._migrate_task_table_v1_to_v2(con)
+            self._set_user_version(con, LATEST_SCHEMA_VERSION)
             return
 
         if "Player" in existing_tables:
@@ -74,6 +89,7 @@ class DatabaseConnection:
                 task_id TEXT PRIMARY KEY NOT NULL,
                 name TEXT NOT NULL CHECK(length(trim(name)) > 0),
                 difficulty INTEGER NOT NULL CHECK(difficulty IN (1, 2, 3)),
+                important_level INTEGER NOT NULL DEFAULT 50 CHECK(important_level BETWEEN 0 AND 100),
                 description TEXT NOT NULL DEFAULT '',
                 current_progress REAL NOT NULL DEFAULT 0 CHECK(current_progress >= 0),
                 full_progress REAL NOT NULL DEFAULT 1 CHECK(full_progress > 0),
@@ -88,6 +104,19 @@ class DatabaseConnection:
                 FOREIGN KEY(player_id) REFERENCES player(player_id) ON DELETE CASCADE
             );
             """
+        )
+
+    def _migrate_task_table_v1_to_v2(self, con: sqlite3.Connection) -> None:
+        con.execute(
+            f"ALTER TABLE task ADD COLUMN important_level INTEGER NOT NULL DEFAULT {DEFAULT_IMPORTANT_LEVEL} CHECK(important_level BETWEEN 0 AND 100);"
+        )
+        con.execute(
+            """
+            UPDATE task
+            SET important_level = ?
+            WHERE important_level IS NULL;
+            """,
+            (DEFAULT_IMPORTANT_LEVEL,),
         )
 
     def reset_database(self) -> None:
@@ -126,7 +155,7 @@ class DatabaseConnection:
         if player_id is not None:
             query += " AND player_id = ?"
             params = (player_id,)
-        query += " ORDER BY difficulty DESC, created_at DESC;"
+        query += " ORDER BY created_at DESC;"
 
         with self._get_connection() as con:
             cur = con.cursor()
@@ -191,6 +220,7 @@ class DatabaseConnection:
         player_id: str,
         name: str,
         difficulty: int | None = None,
+        important_level: int | None = None,
         description: str | None = None,
         full_progress: float | None = None,
         reward_xp: int | None = None,
@@ -206,6 +236,10 @@ class DatabaseConnection:
         difficulty = difficulty or 1
         if difficulty not in {1, 2, 3}:
             raise ValueError("Difficulty must be 1, 2, or 3.")
+
+        important_level = DEFAULT_IMPORTANT_LEVEL if important_level is None else int(important_level)
+        if not 0 <= important_level <= 100:
+            raise ValueError("Important level must be between 0 and 100.")
 
         progress_total = full_progress if full_progress is not None else 1.0
         if progress_total <= 0:
@@ -225,6 +259,7 @@ class DatabaseConnection:
                     task_id,
                     name,
                     difficulty,
+                    important_level,
                     description,
                     current_progress,
                     full_progress,
@@ -237,12 +272,13 @@ class DatabaseConnection:
                     created_at,
                     player_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     task_id,
                     cleaned_name,
                     difficulty,
+                    important_level,
                     description or "",
                     0.0,
                     progress_total,
@@ -268,6 +304,7 @@ class DatabaseConnection:
                     player_id,
                     str(payload.get("name", "")),
                     difficulty=int(payload.get("difficulty", 1)),
+                    important_level=int(payload.get("important_level", DEFAULT_IMPORTANT_LEVEL)),
                     description=str(payload.get("description", "")),
                     reward_xp=int(payload["reward_xp"]) if payload.get("reward_xp") is not None else None,
                     deadline=str(payload["deadline"]) if payload.get("deadline") else None,
@@ -457,7 +494,7 @@ class DatabaseConnection:
     def _map_task_row(self, row: sqlite3.Row) -> dict[str, Any]:
         mapped = dict(row)
         mapped["tags"] = [tag for tag in mapped.get("tags", "").split(",") if tag]
-        return mapped
+        return engine.enrich_task_priority(mapped)
 
     def _list_tables(self, con: sqlite3.Connection) -> list[str]:
         cur = con.cursor()
@@ -469,6 +506,11 @@ class DatabaseConnection:
             """
         )
         return [row["name"] for row in cur.fetchall()]
+
+    def _get_table_columns(self, con: sqlite3.Connection, table_name: str) -> list[str]:
+        cur = con.cursor()
+        cur.execute(f"PRAGMA table_info({table_name});")
+        return [row[1] for row in cur.fetchall()]
 
     def _get_user_version(self, con: sqlite3.Connection) -> int:
         cur = con.cursor()
@@ -540,6 +582,7 @@ class DatabaseConnection:
                     task_id,
                     name,
                     difficulty,
+                    important_level,
                     description,
                     current_progress,
                     full_progress,
@@ -552,12 +595,13 @@ class DatabaseConnection:
                     created_at,
                     player_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     legacy.get("TaskID"),
                     legacy.get("name") or "Untitled Quest",
                     min(max(int(legacy.get("difficulty") or 1), 1), 3),
+                    DEFAULT_IMPORTANT_LEVEL,
                     legacy.get("description") or "",
                     float(legacy.get("currentProgress") or 0.0),
                     max(float(legacy.get("fullProgress") or 1.0), 1.0),
