@@ -36,7 +36,7 @@ class App(Adw.Application):
         self.window = None
         self.player: dict | None = None
         self.player_id: str | None = None
-        self.mission_view_active = False
+        self.task_view_mode = "flat"
         self.current_mission_task_ids: list[str] = []
 
     def do_activate(self):
@@ -56,6 +56,7 @@ class App(Adw.Application):
             on_delete_character=self._open_delete_message_dialog,
             on_create_player=self._create_player,
             on_magical_sort=self._activate_magical_sorting,
+            on_tag_batch=self._activate_tag_batching,
         )
         self._refresh_app_state()
 
@@ -63,9 +64,10 @@ class App(Adw.Application):
         self.player = self.db.fetch_player()
         if self.player is None:
             self.player_id = None
-            self.mission_view_active = False
+            self.task_view_mode = "flat"
             self.current_mission_task_ids = []
             self.ui.show_welcome_state()
+            self.ui.update_matrix([])
             return
 
         self.player_id = str(self.player["player_id"])
@@ -77,9 +79,10 @@ class App(Adw.Application):
         self.player = self.db.fetch_player()
         if self.player is None:
             self.player_id = None
-            self.mission_view_active = False
+            self.task_view_mode = "flat"
             self.current_mission_task_ids = []
             self.ui.show_welcome_state()
+            self.ui.update_matrix([])
             return
 
         self.player_id = str(self.player["player_id"])
@@ -88,12 +91,20 @@ class App(Adw.Application):
     def _load_task_list(self) -> None:
         if self.player_id is None:
             self.ui.render_tasks([], self._complete_task)
+            self.ui.update_matrix([])
             return
 
         tasks = self.db.fetch_unfinished_tasks(self.player_id)
-        if self.mission_view_active:
+        self.ui.update_matrix(tasks)
+
+        if self.task_view_mode == "mission":
             mission_tasks, backlog_tasks = self._split_tasks_from_locked_mission(tasks)
             self.ui.render_mission_tasks(mission_tasks, backlog_tasks, self._complete_task)
+            return
+
+        if self.task_view_mode == "tags":
+            tag_batches = engine.batch_tasks_by_primary_tag(tasks)
+            self.ui.render_tag_batches(tag_batches, self._complete_task)
             return
 
         self.ui.render_tasks(tasks, self._complete_task)
@@ -127,7 +138,7 @@ class App(Adw.Application):
             return
 
         self.ui.set_player_name_error_visible(False)
-        self.mission_view_active = False
+        self.task_view_mode = "flat"
         self.current_mission_task_ids = []
         self.db.add_player(name)
         self._refresh_app_state()
@@ -245,12 +256,32 @@ class App(Adw.Application):
         if self.player_id is None:
             return
 
+        if self.task_view_mode == "mission":
+            self.task_view_mode = "flat"
+            self._load_task_list()
+            self.ui.show_notice("Returned to the full quest log.")
+            return
+
         tasks = self.db.fetch_unfinished_tasks(self.player_id)
         mission_tasks, backlog_tasks = engine.split_tasks_for_current_mission(tasks)
         self.current_mission_task_ids = [str(task.get("task_id")) for task in mission_tasks]
-        self.mission_view_active = True
+        self.task_view_mode = "mission"
         self.ui.render_mission_tasks(mission_tasks, backlog_tasks, self._complete_task)
         self.ui.show_notice("Current Mission refreshed from importance, urgency, and difficulty.")
+
+    def _activate_tag_batching(self, _widget) -> None:
+        if self.player_id is None:
+            return
+
+        if self.task_view_mode == "tags":
+            self.task_view_mode = "flat"
+            self._load_task_list()
+            self.ui.show_notice("Returned to the full quest log.")
+            return
+
+        self.task_view_mode = "tags"
+        self._load_task_list()
+        self.ui.show_notice("Quest log grouped by primary tag.")
 
     def _complete_task(self, widget) -> None:
         if self.player is None or self.player_id is None:

@@ -229,3 +229,25 @@ def group_tasks_by_importance_band(
         else:
             grouped["E"].append(task)
     return grouped
+
+
+def batch_tasks_by_primary_tag(
+    tasks: list[dict[str, Any]],
+    *,
+    today: date | None = None,
+    config: TaskPriorityConfig = DEFAULT_TASK_PRIORITY,
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for task in rank_tasks_for_priority(tasks, today=today, config=config):
+        tags = task.get("tags") or []
+        batch_name = str(tags[0]).strip().title() if tags else "Untagged"
+        grouped.setdefault(batch_name, []).append(task)
+
+    return sorted(
+        grouped.items(),
+        key=lambda item: (
+            item[1][0].get("priority_score", 0),
+            item[0],
+        ),
+        reverse=True,
+    )
