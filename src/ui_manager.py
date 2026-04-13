@@ -27,6 +27,7 @@ class QuestUIManager:
         *,
         on_toggle_entry,
         on_import,
+        on_copy_prompt,
         on_task_name_activate,
         on_task_description_activate,
         on_delete_character,
@@ -51,6 +52,7 @@ class QuestUIManager:
         self._build_header(
             on_toggle_entry,
             on_import,
+            on_copy_prompt,
             on_task_name_activate,
             on_task_description_activate,
         )
@@ -74,6 +76,7 @@ class QuestUIManager:
         self.view_switcher.set_visible(False)
         self.add_btn.set_sensitive(False)
         self.import_btn.set_sensitive(False)
+        self.prompt_btn.set_sensitive(True)
         self.magical_sort_btn.set_sensitive(False)
         self.delete_btn.set_sensitive(False)
         self.set_task_editor_visible(show_editor=False)
@@ -88,6 +91,7 @@ class QuestUIManager:
         self.view_switcher.set_visible(True)
         self.add_btn.set_sensitive(True)
         self.import_btn.set_sensitive(True)
+        self.prompt_btn.set_sensitive(True)
         self.magical_sort_btn.set_sensitive(True)
         self.delete_btn.set_sensitive(True)
         self.stack.set_visible_child(self.content_box)
@@ -125,14 +129,14 @@ class QuestUIManager:
         if mission_tasks:
             self._set_focus_card(
                 mission_tasks[0],
-                message="This is the quest at the front of your current mission queue.",
+                message="Work through this mission set at your own pace, then refresh when you are ready for the next batch.",
             )
             for index, task in enumerate(mission_tasks):
                 self.current_mission_list.append(
                     self._build_task_row(task, on_complete_task, is_focus=index == 0)
                 )
         else:
-            self._set_focus_card(None, message="No active mission yet. Try magical sorting once you have a few quests.")
+            self._set_focus_card(None, message="No active mission right now. Press magical sorting whenever you want a fresh batch.")
             self.current_mission_list.append(
                 self._build_empty_state_row("No quests selected for the current mission.")
             )
@@ -146,6 +150,12 @@ class QuestUIManager:
             self.quest_backlog_list.append(
                 self._build_empty_state_row("No quests waiting in the backlog.")
             )
+
+    def copy_text_to_clipboard(self, text: str) -> None:
+        display = Gdk.Display.get_default()
+        if display is None:
+            raise RuntimeError("Clipboard is unavailable without a display.")
+        display.get_clipboard().set(text)
 
     def get_player_name(self) -> str:
         return self.player_name.get_text()
@@ -229,16 +239,26 @@ class QuestUIManager:
         self,
         on_toggle_entry,
         on_import,
+        on_copy_prompt,
         on_task_name_activate,
         on_task_description_activate,
     ) -> None:
         self.header = Adw.HeaderBar()
         self.add_btn = Gtk.Button(icon_name="list-add-symbolic")
+        self.add_btn.set_tooltip_text("Add a quest")
         self.add_btn.connect("clicked", on_toggle_entry)
 
         self.import_btn = Gtk.Button(icon_name="document-open-symbolic")
         self.import_btn.set_tooltip_text("Import Quest Log")
         self.import_btn.connect("clicked", on_import)
+
+        self.prompt_btn = Gtk.Button(label="?")
+        self.prompt_btn.set_tooltip_text("Click to get the prompt")
+        self.prompt_btn.connect("clicked", on_copy_prompt)
+
+        self.theme_toggle = Gtk.ToggleButton()
+        self.theme_toggle.set_tooltip_text("Toggle light and dark theme")
+        self.theme_toggle.connect("toggled", self._toggle_theme)
 
         self.task_name_entry = Gtk.Entry(placeholder_text="Enter new quest...")
         self.task_name_entry.connect("activate", on_task_name_activate)
@@ -297,8 +317,11 @@ class QuestUIManager:
         self.quick_add_box.append(helper)
 
         self.header.pack_start(self.add_btn)
+        self.header.pack_end(self.theme_toggle)
+        self.header.pack_end(self.prompt_btn)
         self.header.pack_end(self.import_btn)
         self.header_box.append(self.header)
+        self._sync_theme_toggle_icon()
 
     def _build_welcome_page(self, on_create_player) -> None:
         self.welcome_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -306,18 +329,23 @@ class QuestUIManager:
         self.welcome_box.set_margin_bottom(24)
         self.welcome_box.set_margin_start(24)
         self.welcome_box.set_margin_end(24)
+        self.welcome_box.set_valign(Gtk.Align.CENTER)
 
         title = Gtk.Label(label="Quests")
+        title.set_halign(Gtk.Align.CENTER)
         subtitle = Gtk.Label(label="Start your legendary tale today, Adventurer!")
+        subtitle.set_halign(Gtk.Align.CENTER)
 
         self.player_name = Gtk.Entry(placeholder_text="Enter your name...")
         self.player_name.connect("activate", on_create_player)
 
         self.player_name_error = Gtk.Label(label="Name can not be empty")
         self.player_name_error.add_css_class("error")
+        self.player_name_error.set_halign(Gtk.Align.CENTER)
         self.player_name_error.set_visible(False)
 
         self.create_char_btn = Gtk.Button(label="Confirm")
+        self.create_char_btn.set_halign(Gtk.Align.CENTER)
         self.create_char_btn.connect("clicked", on_create_player)
 
         self.welcome_box.append(title)
@@ -333,14 +361,27 @@ class QuestUIManager:
         self.content_box.set_margin_start(16)
         self.content_box.set_margin_end(16)
 
-        self.label = Gtk.Label(label="Welcome, Adventurer!", xalign=0)
-        self.level_value = Gtk.Label(xalign=0)
+        self.hero_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.hero_box.set_halign(Gtk.Align.CENTER)
+
+        self.label = Gtk.Label(label="Welcome, Adventurer!")
+        self.label.set_halign(Gtk.Align.CENTER)
+        self.level_value = Gtk.Label()
+        self.level_value.set_halign(Gtk.Align.CENTER)
         self.level_value.level_num = 1
         self.level_value.add_css_class("level-text")
 
-        self.xp_label = Gtk.Label(xalign=0)
+        self.xp_label = Gtk.Label()
+        self.xp_label.set_halign(Gtk.Align.CENTER)
         self.xp_bar = Gtk.ProgressBar()
         self.xp_bar.xp_point = 0
+        self.xp_bar.set_size_request(320, -1)
+        self.xp_bar.set_halign(Gtk.Align.CENTER)
+
+        self.hero_box.append(self.label)
+        self.hero_box.append(self.level_value)
+        self.hero_box.append(self.xp_label)
+        self.hero_box.append(self.xp_bar)
 
         self.notice_label = Gtk.Label(wrap=True, xalign=0)
         self.notice_label.set_visible(False)
@@ -392,15 +433,20 @@ class QuestUIManager:
         self.mission_sections_box.append(self.current_mission_expander)
         self.mission_sections_box.append(self.quest_backlog_expander)
 
-        self.content_box.append(self.label)
-        self.content_box.append(self.level_value)
-        self.content_box.append(self.xp_label)
-        self.content_box.append(self.xp_bar)
+        self.task_scroll_content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.task_scroll_content.append(self.flat_tasks_box)
+        self.task_scroll_content.append(self.mission_sections_box)
+
+        self.task_scroll = Gtk.ScrolledWindow()
+        self.task_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.task_scroll.set_vexpand(True)
+        self.task_scroll.set_child(self.task_scroll_content)
+
+        self.content_box.append(self.hero_box)
         self.content_box.append(self.notice_label)
         self.content_box.append(self.focus_card)
         self.content_box.append(task_header_box)
-        self.content_box.append(self.flat_tasks_box)
-        self.content_box.append(self.mission_sections_box)
+        self.content_box.append(self.task_scroll)
 
         self._set_task_list_mode("flat")
 
@@ -541,7 +587,6 @@ class QuestUIManager:
     ) -> Adw.ExpanderRow:
         row = Adw.ExpanderRow(title=str(task.get("name") or "Untitled Quest"))
         difficulty = int(task.get("difficulty") or 1)
-        important_level = int(task.get("important_level") or 0)
 
         if difficulty == 3:
             row.add_css_class("task-hard")
@@ -566,11 +611,6 @@ class QuestUIManager:
         description.set_margin_start(10)
         description.set_margin_end(10)
         row.add_row(description)
-
-        importance_badge = Gtk.Label(label=f"IMP {important_level}")
-        importance_badge.add_css_class("importance-chip")
-        importance_badge.add_css_class(self._importance_css_class(important_level))
-        row.add_suffix(importance_badge)
 
         finish_btn = Gtk.Button(
             icon_name="object-select-symbolic",
@@ -616,13 +656,6 @@ class QuestUIManager:
             return "Medium"
         return "Easy"
 
-    def _importance_css_class(self, important_level: int) -> str:
-        if important_level >= 75:
-            return "importance-high"
-        if important_level >= 40:
-            return "importance-medium"
-        return "importance-low"
-
     def _set_focus_card(self, task: dict | None, *, message: str) -> None:
         if task is None:
             self.focus_title.set_label("No active quests")
@@ -652,6 +685,19 @@ class QuestUIManager:
         else:
             self.tasks_header.set_label("Quest Log")
             self.magical_sort_btn.set_label("Magical Sorting")
+
+    def _toggle_theme(self, _widget) -> None:
+        style_manager = Adw.StyleManager.get_default()
+        if self.theme_toggle.get_active():
+            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+        else:
+            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+        self._sync_theme_toggle_icon()
+
+    def _sync_theme_toggle_icon(self) -> None:
+        is_dark = self.theme_toggle.get_active()
+        icon_name = "weather-clear-symbolic" if is_dark else "weather-clear-night-symbolic"
+        self.theme_toggle.set_icon_name(icon_name)
 
     def _set_optional_widget_visible(self, widget: Gtk.Widget, visible: bool) -> None:
         if visible and widget.get_parent() is None:

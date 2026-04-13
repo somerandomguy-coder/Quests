@@ -29,6 +29,7 @@ class App(Adw.Application):
 
         self.project_root = Path(__file__).resolve().parent.parent
         self.database_path = Path(__file__).resolve().with_name("database.db")
+        self.import_prompt_path = Path(__file__).resolve().with_name("import_prompt.md")
         self.db = database.DatabaseConnection(self.database_path)
         self.ui = QuestUIManager(self.project_root)
 
@@ -36,6 +37,7 @@ class App(Adw.Application):
         self.player: dict | None = None
         self.player_id: str | None = None
         self.mission_view_active = False
+        self.current_mission_task_ids: list[str] = []
 
     def do_activate(self):
         if self.window is None:
@@ -48,6 +50,7 @@ class App(Adw.Application):
             self,
             on_toggle_entry=self._toggle_task_entry,
             on_import=self._import_tasks,
+            on_copy_prompt=self._copy_import_prompt,
             on_task_name_activate=self._toggle_task_description,
             on_task_description_activate=self._create_task,
             on_delete_character=self._open_delete_message_dialog,
@@ -61,6 +64,7 @@ class App(Adw.Application):
         if self.player is None:
             self.player_id = None
             self.mission_view_active = False
+            self.current_mission_task_ids = []
             self.ui.show_welcome_state()
             return
 
@@ -74,6 +78,7 @@ class App(Adw.Application):
         if self.player is None:
             self.player_id = None
             self.mission_view_active = False
+            self.current_mission_task_ids = []
             self.ui.show_welcome_state()
             return
 
@@ -87,11 +92,33 @@ class App(Adw.Application):
 
         tasks = self.db.fetch_unfinished_tasks(self.player_id)
         if self.mission_view_active:
-            mission_tasks, backlog_tasks = engine.split_tasks_for_current_mission(tasks)
+            mission_tasks, backlog_tasks = self._split_tasks_from_locked_mission(tasks)
             self.ui.render_mission_tasks(mission_tasks, backlog_tasks, self._complete_task)
             return
 
         self.ui.render_tasks(tasks, self._complete_task)
+
+    def _split_tasks_from_locked_mission(
+        self,
+        tasks: list[dict],
+    ) -> tuple[list[dict], list[dict]]:
+        task_by_id = {str(task.get("task_id")): task for task in tasks}
+        mission_tasks: list[dict] = []
+        mission_ids_in_view: set[str] = set()
+
+        for task_id in self.current_mission_task_ids:
+            task = task_by_id.get(task_id)
+            if task is None:
+                continue
+            mission_tasks.append(task)
+            mission_ids_in_view.add(task_id)
+
+        ranked_tasks = engine.rank_tasks_for_priority(tasks)
+        backlog_tasks = [
+            task for task in ranked_tasks
+            if str(task.get("task_id")) not in mission_ids_in_view
+        ]
+        return mission_tasks, backlog_tasks
 
     def _create_player(self, _widget) -> None:
         name = self.ui.get_player_name().strip()
@@ -101,6 +128,7 @@ class App(Adw.Application):
 
         self.ui.set_player_name_error_visible(False)
         self.mission_view_active = False
+        self.current_mission_task_ids = []
         self.db.add_player(name)
         self._refresh_app_state()
 
@@ -110,6 +138,14 @@ class App(Adw.Application):
 
         self.ui.clear_notice()
         self.ui.open_import_dialog(self._finish_import_tasks)
+
+    def _copy_import_prompt(self, _widget) -> None:
+        try:
+            prompt_text = self.import_prompt_path.read_text(encoding="utf-8")
+            self.ui.copy_text_to_clipboard(prompt_text)
+            self.ui.show_notice("Import prompt copied to clipboard.")
+        except Exception as error:
+            self.ui.show_notice(f"Could not copy the import prompt: {error}", error=True)
 
     def _finish_import_tasks(self, source, result) -> None:
         try:
@@ -209,8 +245,11 @@ class App(Adw.Application):
         if self.player_id is None:
             return
 
+        tasks = self.db.fetch_unfinished_tasks(self.player_id)
+        mission_tasks, backlog_tasks = engine.split_tasks_for_current_mission(tasks)
+        self.current_mission_task_ids = [str(task.get("task_id")) for task in mission_tasks]
         self.mission_view_active = True
-        self._load_task_list()
+        self.ui.render_mission_tasks(mission_tasks, backlog_tasks, self._complete_task)
         self.ui.show_notice("Current Mission refreshed from importance, urgency, and difficulty.")
 
     def _complete_task(self, widget) -> None:
@@ -234,6 +273,10 @@ class App(Adw.Application):
             current_xp,
         )
         self.db.complete_task(widget.task_id, self.player_id, new_xp, new_level)
+        self.current_mission_task_ids = [
+            task_id for task_id in self.current_mission_task_ids
+            if task_id != str(widget.task_id)
+        ]
         self._load_player_state()
         self._load_task_list()
         self.ui.show_notice(f"Quest completed. You gained {xp_gain} XP.")
